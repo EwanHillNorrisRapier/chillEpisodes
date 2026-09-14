@@ -1610,16 +1610,37 @@ Group by a.PolicyCode
 --RO.F1
 --R0.B1
 --RO.F2
+-- converted from the count query. ClaimDate is an integer in yyyymmdd form so it is cast to a date for the
+-- timestamp, the derived table was flattened to reach it, and the twelve month claims window is kept as it was.
 
- select  count(distinct a.PolicyCode) 
- from   (   select  PolicyCode 
-            from	stg.motorclaims
-            Where	ClaimDate between 20250801 and 20260731
-            and	    OwnFaultFlag = 'Y' 
-            )                                       a, 
-        stg.R0_MotorPoliciesEligibleForRenewals     b 
- Where  a.PolicyCode = b.PolicyCode
-
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Motor',
+    date_trunc('MINUTE', max(to_date(cast(a.ClaimDate as string), 'yyyyMMdd'))),
+    cast(max(to_date(cast(a.ClaimDate as string), 'yyyyMMdd')) as date),
+    'RO.F2',
+    'Motor Renewal - Declared claims not recorded',
+    'Policy'
+from    stg.motorclaims                             a,
+        stg.R0_MotorPoliciesEligibleForRenewals     b
+Where   a.PolicyCode = b.PolicyCode
+and     a.ClaimDate between 20250801 and 20260731
+and     a.OwnFaultFlag = 'Y'
+Group by b.PolicyCode
+;
 
 # In[ ]:
 
@@ -1998,8 +2019,40 @@ Group by TyPolicyCode
 
 
 --R3b.F1
-stg.R0_genesys_derived_data
+-- converted literally from the query in this cell, with the seelct typo corrected.
+-- CAVEAT: the query is a bare distinct conversationId over stg.R0_genesys_derived_data with no queue,
+-- abandoned or wait time filter, so it returns every Genesys conversation in the run window rather than the
+-- 969 on the recon tab. The Motor equivalent A0.F1 filters abandoned = 1 and CallWaitTime > 0 on a named
+-- queue. Tell me the Motor renewals queue and I will bring this in line.
 
+insert INTO
+ods.EpisodeEventStream
+(
+    EventSourceID,
+    SourceQuoteReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.conversationID,
+    null,
+    2,
+    'Motor',
+    date_trunc('MINUTE', min(a.conversationStartTime)),
+    cast(min(a.conversationStartTime) as date),
+    'R3b.F1',
+    'Motor Renewal - Call wait time, or fails to make contact',
+    'Call'
+from    stg.R3bF1_genesys_inbound_call_duration_summary a, 
+stg.R0_genesys_derived_data b 
+where a.abandoned = 1 and a.CallWaitTime > 0 
+and a.ConversationId = b.ConversationId 
+;
 
 # In[ ]:
 
@@ -3265,25 +3318,143 @@ Group by a.CustomerPhoneNumber
 ;
 
 --HA1.F1
-select count(*) from stg.HA1_HFQ_Quotes a left join (select * from dlk.EXT_XtremePushResults   a 
-where	`timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and		campaign_name like 'Home % TYR %' 
-and interaction_type = 'sent' 
 -- without the below conditions we get 70113 entries but it includes workflow/ sms / email so I think only 2/3 rd contacts sent out
-and MessageType = 'EMAIL' ) b
-on a.proposer_email = b.email
-where b.QuoteQueryGuid is null
+
+-- converted from the count query as written, following your note that the price comes through in the email,
+-- so a quote with no campaign email is a quote that never got a price. The count(*) on a left join is grouped
+-- to the quote so a fan out cannot inflate it.
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourceQuoteReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.QuoteCodeReference,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(a.ts_unix)),
+    cast(min(a.ts_unix) as date),
+    'HA1.F1',
+    'Home Acquisition - Outbound campaigns to quotes that never got a price',
+    'Quote'
+from    stg.HA1_HFQ_Quotes a
+left join
+        (select email, QuoteQueryGuid
+         from   dlk.EXT_XtremePushResults
+         where  `timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
+         and    campaign_name like 'Home % TYR %'
+         and    interaction_type = 'sent'
+         and    MessageType = 'EMAIL'
+        ) b
+        on a.proposer_email = b.email
+where   b.QuoteQueryGuid is null
+Group by a.QuoteCodeReference
+;
 
 # In[ ]:
 
 --HA0
-SELECT count(distinct  ConversationId)
-FROM stg.A0_MFQ_genesys_link
+-- converted. The Home inbound Genesys queue is INBOUND_SALES_HOME, so the filtered table is built here the
+-- same way stg.A0_genesys_derived_data_filtered is built for Motor.
+-- CAVEAT: the Motor A0 insert excludes callers whose phone number matches an MFQ quote, so it counts only
+-- people who did not quote online first. No HFQ table in this notebook names a customer phone column, so that
+-- exclusion is not applied here and this will read above the Fabric figure of 924 by however many Home callers
+-- had already quoted online. Give me the HFQ phone column and I will add the exclusion.
+
+Create or Replace Table stg.HA0_genesys_derived_data_filtered as
+select	a.ConversationId, a.CustomerPhoneNumber, a.sessionIndex, a.conversationStartTime
+from	stg.A0_genesys_derived_data	a,
+        (select	ConversationId, max(sessionIndex) sessionIndex
+        from	stg.A0_genesys_derived_data
+        Where	queueName is not null
+        and		originatingDirection = 'inbound'
+        Group by ConversationId
+        )	b
+where	a.ConversationId = b.ConversationId
+and		a.sessionIndex = b.sessionIndex
+and		a.queueName = 'INBOUND_SALES_HOME'
+;
+
+insert INTO
+ods.EpisodeEventStream
+(
+    EventSourceID,
+    SourceQuoteReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.ConversationId,
+    null,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(a.conversationStartTime)),
+    cast(min(a.conversationStartTime) as date),
+    'HA0',
+    'Home Acquisition - Straight into the CALL CENTRE',
+    'Call'
+from    stg.HA0_genesys_derived_data_filtered a
+Group by a.ConversationId
+;
 
 # In[ ]:
 
 --HA0.F1
-select count(*) from stg.HA0F1_genesys_inbound_call_duration_summary where abandoned = 1 and CallWaitTime > 0 limit 10
+-- converted. The call duration summary for Home did not exist, so it is built here exactly as the Motor
+-- stg.A0F1_genesys_inbound_call_duration_summary is built, with INBOUND_SALES_HOME. The limit 10 on the
+-- original count was for eyeballing and is dropped.
+
+Create or Replace Table stg.HA0F1_genesys_inbound_call_duration_summary as
+select	a.ConversationId, min(a.conversationStartTime) as conversationStartTime,
+        sum(a.agentAnswered) as agentAnswered, sum(a.alertNoAnswer) alertNoAnswer, sum(a.abandoned) abandoned,
+        sum(a.totalAcdWaitDuration) CallWaitTime, sum(a.totalAgentAlertDuration) CallRingTime,
+        sum(a.totalAgentHoldDuration) CallHoldTime, sum(a.totalAgentTalkDuration) CallSpokenTime
+from	stg.A0_genesys_derived_data	a
+where	a.queueName = 'INBOUND_SALES_HOME'
+Group by a.ConversationId
+;
+
+insert INTO
+ods.EpisodeEventStream
+(
+    EventSourceID,
+    SourceQuoteReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.ConversationId,
+    null,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(a.conversationStartTime)),
+    cast(min(a.conversationStartTime) as date),
+    'HA0.F1',
+    'Home Acquisition - Call wait time, or fails to make contact',
+    'Call'
+from    stg.HA0F1_genesys_inbound_call_duration_summary a
+Where   a.abandoned = 1
+and     a.CallWaitTime > 0
+Group by a.ConversationId
+;
 
 # In[ ]:
 
@@ -4392,6 +4563,27 @@ Group by a.ConversationId
 # In[ ]:
 
 --HR2.B1
+
+-- Staging tables that the HR2.B1 block needs. These were inlined in the HR2.B1 cell before its
+-- insert was removed as a block header, so they are kept here. They build data only and write
+-- nothing to the event stream.
+
+Create or Replace Table stg.HomeRenewalScvCustomerKeys as
+select  distinct scv_customer_key , PolicyCode, ClientCode
+from    ods.scv_customer_key  a, (select PolicyCode, left(PolicyCode,6) as ClientCode from stg.R0_HomePoliciesEligibleForRenewals) b
+Where   a.SourceSystemReference = b.ClientCode
+and     a.SourceSystemId = 1
+;
+
+Create or Replace Table stg.HomeRenewalsDoingHFQ as
+select  distinct a.scv_customer_key, a.PolicyCode, b.QuoteCodeReference, ts_unix as QuoteStartDateTime
+from    stg.HomeRenewalScvCustomerKeys a, stg.HFQ_Quotes b, ods.scv_customer_key c
+Where   a.scv_customer_key = c.scv_customer_key
+and     b.QuoteCodeReference = c.SourceSystemReference
+and     ts_unix between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     SourceSystemId = 3
+;
+
 -- BLOCK HEADER. HR2.B1 is the heading for its sub-steps, not an event in its own right,
 -- so it writes nothing to the event stream. The events come from HR2.B1.1, HR2.B1.2, HR2.B1.3.
 -- The insert that used to sit here was removed on 14 September 2026 because it double
@@ -4588,6 +4780,19 @@ Group by a.TyPolicyCode
 # In[ ]:
 
 --HR3.B1
+
+-- Staging tables that the HR3.B1 block needs. These were inlined in the HR3.B1 cell before its
+-- insert was removed as a block header, so they are kept here. They build data only and write
+-- nothing to the event stream.
+
+Create or Replace Table stg.HR3B1_LapsedThisYearPolicy as
+select  distinct b.PolicyCode , b.RenewalDate
+from    dlk.rbsdata2_policy_physical a,
+        stg.R0_HomePoliciesEligibleForRenewals b
+Where   trim(a.pl_code) = trim(b.PolicyCode)  -- trim is important as the source tables have trailing spaces
+and     trim(a.pl_status) = 'L'
+;
+
 -- BLOCK HEADER. HR3.B1 is the heading for its sub-steps, not an event in its own right,
 -- so it writes nothing to the event stream. The events come from HR3.B1.1, HR3.B1.2.
 -- The insert that used to sit here was removed on 14 September 2026 because it double
@@ -4890,10 +5095,38 @@ Group by a.PolicyCode
 # In[ ]: 
 
 --HR2.B1.2
-
-select *  from stg.HR2B1_1_Base a, stg.hfq_prices b Where a.QuoteCodeReference = b.QuoteCodeReference 
-limit 100 
 -- ideally pull the last record or the least QuoteBestPrice for eventstream
+
+-- converted from the count query. The event is that a price came back, not which price, so the join to
+-- stg.hfq_prices only proves one exists and the author's open question about last record against lowest
+-- QuoteBestPrice does not affect the insert. Grain follows HR2.B1.1, one row per policy.
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(a.QuoteStartDatetime)),
+    cast(min(a.QuoteStartDatetime) as date),
+    'HR2.B1.2',
+    'Home Renewal - New price returned',
+    'Policy'
+from    stg.HR2B1_1_Base    a,
+        stg.hfq_prices      b
+Where   a.QuoteCodeReference = b.QuoteCodeReference
+Group by a.PolicyCode
+;
 
 # In[ ]: 
 
@@ -5578,49 +5811,54 @@ Group by SourcePolicyReference
 
 --HM6.B1
 --HM4.B1.1
+-- converted from the second query in this cell, the one you marked 28, per your instruction.
+-- The derived table that carried only PolicyCode was flattened so the SaleDate timestamp is reachable.
+-- Note this arm carries no Campaign filter, so it will overlap with HM4.B1.4 which filters Campaign = 'DAY 1'.
 
-SELECT  count(distinct a.PolicyCode)
-FROM    (
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(coalesce(try_cast(concat(right(a.SaleDate,4), '-',substring(a.SaleDate,4,2),'-',left(a.SaleDate,2)) as date),'1900-01-01'))),
+    cast(min(coalesce(try_cast(concat(right(a.SaleDate,4), '-',substring(a.SaleDate,4,2),'-',left(a.SaleDate,2)) as date),'1900-01-01')) as date),
+    'HM4.B1.1',
+    'Home MTA - Document request issued',
+    'Policy'
+from    edw.exp_mychill_chase_daily_snapshot_home a
+Where	coalesce(try_cast(concat(right(a.SaleDate,4), '-',substring(a.SaleDate,4,2),'-',left(a.SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig)
+and     coalesce(try_cast(concat(right(a.SaleDate,4), '-',substring(a.SaleDate,4,2),'-',left(a.SaleDate,2)) as date),'1900-01-01') <  (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.PolicyType = 'New Business'
+and case
+        when a.Gap_In_Cov_Ltr_Status = 'O' then 1
+        when a.Val_For_Spec_Item_Status = 'O' then 1
+        when a.PPS_Num_Status = 'O' then 1
+        When a.Identification_Status = 'O' then 1
+        when a.Finance_Form_Status = 'O' then 1
+        when a.Digital_Journey_Status = 'O' then 1
+        else 0
+    End = 1
+and     a.PolicyCode in
+        (
             select  b.PolicyCode
             from    stg.JJulyMTAs a, stg.JulyPolicyState b
             Where   a.PolicyCode = b.PolicyCode
-            and     PolicyTypeGroup = 'Home'
-            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
-        )                                       a,
-        ods.EventStream                          d 
-Where   d.EventSourceId = 3 
-and     d.PolicyTypeGroup = 'Home'
-and     d.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and d.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)  
-and     EventDescription like '% Body' 
-and     (   EventDescription like '%Emailed Document%' 
-        or 
-            EventDescription like '%Document Transmitted%'
+            and     b.PolicyTypeGroup = 'Home'
+            and     b.PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
         )
-and     a.PolicyCode = d.SourcePolicyReference --0
-           
-select  count(distinct PolicyCode)
-From    (
-            select  PolicyCode  
-                    from edw.exp_mychill_chase_daily_snapshot_home a
-            Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) and PolicyType = 'New Business' 
-            and case 
-                    when Gap_In_Cov_Ltr_Status = 'O' then 1 
-                    when Val_For_Spec_Item_Status = 'O' then 1 
-                    when PPS_Num_Status = 'O' then 1 
-                    When Identification_Status = 'O' then 1 
-                    when Finance_Form_Status = 'O' then 1 
-                    when Digital_Journey_Status = 'O' then 1 
-                    else 0
-                End = 1
-            and     PolicyCode in 
-            (
-                select  b.PolicyCode
-                from    stg.JJulyMTAs a, stg.JulyPolicyState b
-                Where   a.PolicyCode = b.PolicyCode
-                and     PolicyTypeGroup = 'Home'
-                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
-            ) 
-        )    --28       
+Group by a.PolicyCode
+;
 
 --HM4.B1.2
 -- converted from the count query. Timestamp from the upload event Timestamp, using min for the first submission by the customer.
@@ -5902,45 +6140,87 @@ Group by a.PolicyCode
 --HM6.B1.2
 --HM6.B1.3
 --HC1a
+-- converted from the count query. The staging table build is kept because later HC steps read it. The
+-- cancellation request itself carries no timestamp on edw.tbl_fact_policy_mtc, so PolicyCancelDate from
+-- stg.JulyPolicyState is used. That is when the cancellation took effect, not when the customer asked.
+-- The ShortDescription filter is the one the original breakdown query used to isolate customer requests.
 
-Create or Replace Table stg.JulyHomeCancellations as 
+Create or Replace Table stg.JulyHomeCancellations as
 select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
-from    edw.tbl_fact_policy_mtc 
+from    edw.tbl_fact_policy_mtc
 Where   PolicyTypeGroup = 'Home'
 and     EffectiveDate = '2026-07-31'
+;
 
-select  PolicyStatusDesc,  count(distinct PolicyCode)
-from    edw.tbl_fact_policy_mtc 
-Where   PolicyTypeGroup = 'Home'
-and     EffectiveDate = '2026-07-31'
-and     (    
-            ShortDescription like 'Client%'
-        or            
-            ShortDescription like 'Customer%'
-        )            
-Group by PolicyStatusDesc
-Order by 2 desc 
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', max(b.PolicyCancelDate)),
+    cast(max(b.PolicyCancelDate) as date),
+    'HC1a',
+    'Home Cancellation - Customer asks to cancel',
+    'Policy'
+from    edw.tbl_fact_policy_mtc a,
+        stg.JulyPolicyState     b
+Where   a.PolicyCode = b.PolicyCode
+and     a.PolicyTypeGroup = 'Home'
+and     a.EffectiveDate = '2026-07-31'
+and     (
+            a.ShortDescription like 'Client%'
+        or
+            a.ShortDescription like 'Customer%'
+        )
+Group by a.PolicyCode
+;
 
 --HC1a.F1
+-- converted from the select in this cell, now that HC1b.F1 has been removed as its duplicate. The grain is
+-- the policy and the timestamp is PolicyCancelDate from stg.JulyPolicyState, the same choice made for HC1a.
+-- CAVEAT: the step is described as "No retention or save attempt anywhere" but the query filters
+-- ShortDescription like '%NCT%', which matches the wording of the HC1b.F1 step you removed. Worth a look.
 
-select  *
-from    edw.tbl_fact_policy_mtc 
-Where   PolicyTypeGroup = 'Home'
-and     EffectiveDate = '2026-07-31'
-and     ShortDescription like '%NCT%'
-
-
-# In[ ]:
-
---HC1b.F1
-
--- from XX - Episode Reconciliation - Gaps.html, cell 63 (note or select)
--- header: Home	CANCELLATION	HC1b.F1
-select  *
-from    edw.tbl_fact_policy_mtc 
-Where   PolicyTypeGroup = 'Home'
-and     EffectiveDate = '2026-07-31'
-and     ShortDescription like '%NCT%'
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', max(b.PolicyCancelDate)),
+    cast(max(b.PolicyCancelDate) as date),
+    'HC1a.F1',
+    'Home Cancellation - No retention or save attempt anywhere',
+    'Policy'
+from    edw.tbl_fact_policy_mtc a,
+        stg.JulyPolicyState     b
+Where   a.PolicyCode = b.PolicyCode
+and     a.PolicyTypeGroup = 'Home'
+and     a.EffectiveDate = '2026-07-31'
+and     a.ShortDescription like '%NCT%'
+Group by a.PolicyCode
+;
 
 # In[ ]:
 --HC2
@@ -6116,23 +6396,45 @@ Group by a.SourcePolicyReference
 # In[ ]:
 
 --HD1
+-- converted from the count query, split by PolicyTypeGroup per your instruction, so HD1, D1 and VD1 each
+-- carry their own product. The Group by EventDescription and Order by were an eyeballing breakdown and are
+-- dropped. The timestamp is ConversationStartTime, when the customer rang, rather than the document event.
+-- The 2026-07-01 to 2026-08-10 document window is not the run window so it is kept exactly as written.
 
--- from XX - Episode Reconciliation - Gaps.html, cell 72 (note or select)
--- header: Home	Doc Request	HD1
-SELECT  EventDescription, count(distinct d.SourcePolicyReference), count(*)
-FROM    stg.DocRequestClientCodes                a,
-        ods.EventStream                          d 
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    d.SourcePolicyReference,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(a.ConversationStartTime)),
+    cast(min(a.ConversationStartTime) as date),
+    'HD1',
+    'Home Doc Request - Customer rings and asks for a document',
+    'Policy'
+from    stg.DocRequestClientCodes                a,
+        ods.EventStream                          d
 Where   a.clientCode = left(d.SourcePolicyReference,6)
-and     d.EventSourceId = 3 
+and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     EventDateTime between '2026-07-01 00:00:00.000'  and '2026-08-10 00:00:00.000' 
-and     EventDateTime between ConversationStartTime and dateadd(day,2,ConversationStartTime)
-and     (   d.EventDescription like '%Emailed Document%' 
-        or 
+and     d.EventDateTime between '2026-07-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     d.EventDateTime between a.ConversationStartTime and dateadd(day,2,a.ConversationStartTime)
+and     (   d.EventDescription like '%Emailed Document%'
+        or
             d.EventDescription like '%Document Transmitted%'
-        ) 
-Group by EventDescription
-Order by 2 desc ;
+        )
+Group by d.SourcePolicyReference
+;
 
 # In[ ]:
 --HD1.F1
@@ -6576,6 +6878,46 @@ Group by a.SourcePolicyReference
 --ARR.O2
 --CL1a
 --D1
+-- converted from the count query, split by PolicyTypeGroup per your instruction, so HD1, D1 and VD1 each
+-- carry their own product. The Group by EventDescription and Order by were an eyeballing breakdown and are
+-- dropped. The timestamp is ConversationStartTime, when the customer rang, rather than the document event.
+-- The 2026-07-01 to 2026-08-10 document window is not the run window so it is kept exactly as written.
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    d.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.ConversationStartTime)),
+    cast(min(a.ConversationStartTime) as date),
+    'D1',
+    'Motor Doc Request - Customer rings and asks for a document',
+    'Policy'
+from    stg.DocRequestClientCodes                a,
+        ods.EventStream                          d
+Where   a.clientCode = left(d.SourcePolicyReference,6)
+and     d.EventSourceId = 3
+and     d.PolicyTypeGroup = 'Motor'
+and     d.EventDateTime between '2026-07-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     d.EventDateTime between a.ConversationStartTime and dateadd(day,2,a.ConversationStartTime)
+and     (   d.EventDescription like '%Emailed Document%'
+        or
+            d.EventDescription like '%Document Transmitted%'
+        )
+Group by d.SourcePolicyReference
+;
+
 --D1.F1
 
 -- see the HD1.F1 cell: XX - Episode Reconciliation - Gaps.html cell 74 covers HD1.F1, D1.F1, VD1.F1
@@ -6766,19 +7108,38 @@ Group by a.TyPolicyCode
 
 # In[ ]:
 --VR3b
+-- converted, but note the change of source. The count query in this cell measured receipt documents sent,
+-- which is not what VR3b means, and the cell itself was marked as not enough volume. This is the Van mirror
+-- of HR3b, the same step for Home, using the Channel and PolicyRetNum columns that stg.VanRenewals carries.
+-- stg.VanRenewalsJuly is kept as written for consistency with the other Van renewal steps, though that table
+-- is not built anywhere in this notebook.
 
--- from XX - Episode Reconciliation - Gaps.html, cell 87 (count query)
--- header: Van	Renewal	VR3b
--- header: --= Not enough Volume here
-select  count(distinct PolicyCode)  , count(*)
-from    ods.eventstream a, stg.VanRenewalsJuly b  
-Where   a.SourcePolicyReference = b.TyPolicyCode
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
-and     EventDescription like '%Receipt%'
-and     (   EventDescription like '%Emailed Document%' 
-        or 
-            EventDescription like '%Document Transmitted%'
-        )
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.TyPolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', max(a.TYReportingSaleDate)),
+    cast(max(a.TYReportingSaleDate) as date),
+    'VR3b',
+    'Van Renewal - Customer renews on an INBOUND call',
+    'Policy'
+from    stg.VanRenewalsJuly a
+Where   a.PolicyRetNum = 1
+and     a.Channel = 'a) IB'
+Group by a.TyPolicyCode
+;
 
 # In[ ]:
 --VR3b.F1
@@ -6791,12 +7152,36 @@ and     (   EventDescription like '%Emailed Document%'
 # In[ ]:
 
 --VR3.O1
+-- converted from the count query. Timestamp is LYPolicyRenewDateAdj, the same column VR3.B1.1 uses for the
+-- renewal date passing, because a lapsed policy has no this year sale date. stg.VanRenewalsJuly is kept as
+-- written, though it is not built anywhere in this notebook.
 
--- from XX - Episode Reconciliation - Gaps.html, cell 84 (note or select)
--- header: Van	Renewal	VR3.O1
-select  *
-from    stg.VanRenewalsJuly b  
-limit 10
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', max(b.LYPolicyRenewDateAdj)),
+    cast(max(b.LYPolicyRenewDateAdj) as date),
+    'VR3.O1',
+    'Van Renewal - Policy lapsed',
+    'Policy'
+from    stg.VanRenewalsJuly b
+Where   b.PolicyRetNum is null
+and     b.PolicyOfferNum = 1
+Group by b.PolicyCode
+;
 
 # In[ ]:
 
@@ -7566,26 +7951,72 @@ Group by a.PolicyCode
 # In[ ]:
 
 --VA6.B1.F1
+-- converted from the corrected query in this cell. Grain is the policy and the timestamp is the derived
+-- SaleDate on the chase snapshot, the same expression the other chase steps use. The 2026-05-01 to 2026-07-31
+-- chase window is not the run window so it is kept exactly as written.
+-- Note the query filters PolicyType = 'Renewals' while VA6.B1.F1 sits under Van Acquisition. Left as you wrote it.
 
--- from XX - Episode Reconciliation - Gaps.html, cell 19 (count query)
--- header: docs asked for VA6.B1.F1 VA6.B1.5
-select  count(distinct a.PolicyCode) 
-from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a, stg.R0_HomePoliciesEligibleForRenewals b 
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    PolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
+    cast(min(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01')) as date),
+    'VA6.B1.F1',
+    'Van Acquisition - Documents never submitted, policy at risk of cancellation',
+    'Policy'
+from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
 Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31' 
-and     PolicyType = 'Renewals' 
-and     PolicyTypeGroup = 'Home' 
-and     a.PolicyCode = b.PolicyCode 
+and PolicyType = 'Renewals' 
+and PolicyTypeGroup = 'Van' 
 and case 
-        When Comp_DDM_Status				= 'O' then 1 
-        When Gap_In_Cov_Ltr_Status			= 'O' then 1 
-        When Val_For_Spec_Item_Status		= 'O' then 1 
-        When PPS_Num_Status					= 'O' then 1 
-        When Identification_Status			= 'O' then 1 
-        When Digital_Journey_Status			= 'O' then 1 
-        When Finance_Form_Status			= 'O' then 1 
+        when Sign_Prop_Status				= 'O' then 1 
+        when Sign_Stat_Of_Fact_Status		= 'O' then 1 
+        when Comp_Fin_Agree_Status			= 'O' then 1 
+        when Comp_DDM_Status				= 'O' then 1 
+        when Proof_Of_NCB_Status			= 'O' then 1 
+        when Trans_Proof_Of_NCB_Status		= 'O' then 1 
+        when Ltr_Of_Driv_Exp_Status			= 'O' then 1 
+        when Prop_Driv_Lic_Status			= 'O' then 1 
+        when Nam_Driv_Lic_Status			= 'O' then 1 
+        when Gap_In_Cov_Ltr_Status			= 'O' then 1 
+        when `2ndCar_Cert_Status`			= 'O' then 1 
+        when Doc_Ltr_Status					= 'O' then 1 
+        when Engineers_Rpt_Status			= 'O' then 1 
+        when NCT_Status						= 'O' then 1 
+        when Veh_Lic_Cert_Status			= 'O' then 1 
+        when Irish_Reg_Status				= 'O' then 1 
+        when Main_Driver_Dec_Status			= 'O' then 1 
+        when Soc_Dom_Pleas_Dec_Status		= 'O' then 1 
+        when Comp_Car_Exper_Status			= 'O' then 1 
+        when DD_Conf_Ltr_Status				= 'O' then 1 
+        when Comp_Fin_Mand_Status			= 'O' then 1 
+        when Val_For_Spec_Item_Status		= 'O' then 1 
+        when Dri_Lic_Num_Status				= 'O' then 1 
+        when Comp_Lost_Cert_Dec_Status		= 'O' then 1 
+        when Orig_Cert_Status				= 'O' then 1 
+        when Cancel_Req_Status				= 'O' then 1 
+        when PPS_Num_Status					= 'O' then 1 
+        when Afford_State_Status			= 'O' then 1 
+        when Identification_Status			= 'O' then 1 
+        when Digital_Journey_Status			= 'O' then 1 
+        when Finance_Form_Status			= 'O' then 1 
         else 0
-    End = 1 
-and Campaign = 'DAY 20'
+    End = 1
+Group by PolicyCode
+;
 
 # In[ ]:
 --VA7
@@ -7841,6 +8272,46 @@ Group by a.PolicyCode
 --VARR.O2
 --VCL1a
 --VD1
+-- converted from the count query, split by PolicyTypeGroup per your instruction, so HD1, D1 and VD1 each
+-- carry their own product. The Group by EventDescription and Order by were an eyeballing breakdown and are
+-- dropped. The timestamp is ConversationStartTime, when the customer rang, rather than the document event.
+-- The 2026-07-01 to 2026-08-10 document window is not the run window so it is kept exactly as written.
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    d.SourcePolicyReference,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(a.ConversationStartTime)),
+    cast(min(a.ConversationStartTime) as date),
+    'VD1',
+    'Van Doc Request - Customer rings and asks for a document',
+    'Policy'
+from    stg.DocRequestClientCodes                a,
+        ods.EventStream                          d
+Where   a.clientCode = left(d.SourcePolicyReference,6)
+and     d.EventSourceId = 3
+and     d.PolicyTypeGroup = 'Van'
+and     d.EventDateTime between '2026-07-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     d.EventDateTime between a.ConversationStartTime and dateadd(day,2,a.ConversationStartTime)
+and     (   d.EventDescription like '%Emailed Document%'
+        or
+            d.EventDescription like '%Document Transmitted%'
+        )
+Group by d.SourcePolicyReference
+;
+
 --VD1.F1
 
 -- see the HD1.F1 cell: XX - Episode Reconciliation - Gaps.html cell 74 covers HD1.F1, D1.F1, VD1.F1
