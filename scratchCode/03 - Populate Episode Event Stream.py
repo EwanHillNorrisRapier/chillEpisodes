@@ -2971,6 +2971,7 @@ Or EventDescription like '%Terms Of Business'
 --HA6.B1.1
 --HA6.B1.2
 --HA6.B1.4
+--HA6.B1.5
 --HA6.B1.3
 --HA6.B1.O1
 --HA6.B1.6
@@ -4163,6 +4164,7 @@ group by UserID
 
 --VR3.O1
 --VR4
+--VR4.B2
 --VR4.B2.F1
 --VR5
 --VR6.B1
@@ -4575,6 +4577,7 @@ and     EventDescription in
 --VM4c
 --VM6
 --VM6.B1
+--VM3.B1.1
 --VM3.B1.2
 --VM3.B1.4
 --VM3.B1.5

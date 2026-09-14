@@ -1,7 +1,7 @@
 From a4e846da4b8f0140e97f0c902808b9d5d3ed1bc1 Mon Sep 17 00:00:00 2001
 From: Ewan Hill Norris <ewan.hillnorris@rapieruk.com>
 Date: Mon, 14 Sep 2026 13:40:57 +0000
-Subject: [PATCH] Remove out-of-scope event step markers from event stream
+Subject: [PATCH 1/2] Remove out-of-scope event step markers from event stream
  notebook
 
 The event stream notebook carried 751 event step marker comments. Only
@@ -1132,6 +1132,55 @@ index acf1d0c..20db631 100644
 ---TCL2.F1
 ---TCL.O1
 \ No newline at end of file
+-- 
+2.43.0
+
+
+From 87f5c8b7d85977bcf226d3f6e5cc3a44a4f46eb2 Mon Sep 17 00:00:00 2001
+From: Ewan Hill Norris <ewan.hillnorris@rapieruk.com>
+Date: Mon, 14 Sep 2026 13:56:11 +0000
+Subject: [PATCH 2/2] Restore three event step markers that have Fabric volumes
+
+HA6.B1.5 (Home Acquisition, chase escalation), VR4.B2 (Van Renewal,
+documents requested) and VM3.B1.1 (Van MTA, document request issued)
+carry Fabric volumes on the Reconciliation Request tab but are absent
+from Missing_Event_Stream_Inserts.xlsx, so the previous commit pruned
+them. They are in scope, so they go back in their original positions.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MEWc5KY6FCfLMaPieR9TLE
+---
+ scratchCode/03 - Populate Episode Event Stream.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/scratchCode/03 - Populate Episode Event Stream.py b/scratchCode/03 - Populate Episode Event Stream.py
+index 20db631..ea360c3 100644
+--- a/scratchCode/03 - Populate Episode Event Stream.py	
++++ b/scratchCode/03 - Populate Episode Event Stream.py	
+@@ -2971,6 +2971,7 @@ Or EventDescription like '%Terms Of Business'
+ --HA6.B1.1
+ --HA6.B1.2
+ --HA6.B1.4
++--HA6.B1.5
+ --HA6.B1.3
+ --HA6.B1.O1
+ --HA6.B1.6
+@@ -4163,6 +4164,7 @@ group by UserID
+ 
+ --VR3.O1
+ --VR4
++--VR4.B2
+ --VR4.B2.F1
+ --VR5
+ --VR6.B1
+@@ -4575,6 +4577,7 @@ and     EventDescription in
+ --VM4c
+ --VM6
+ --VM6.B1
++--VM3.B1.1
+ --VM3.B1.2
+ --VM3.B1.4
+ --VM3.B1.5
 -- 
 2.43.0
 
