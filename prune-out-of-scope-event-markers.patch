@@ -1,0 +1,1137 @@
+From a4e846da4b8f0140e97f0c902808b9d5d3ed1bc1 Mon Sep 17 00:00:00 2001
+From: Ewan Hill Norris <ewan.hillnorris@rapieruk.com>
+Date: Mon, 14 Sep 2026 13:40:57 +0000
+Subject: [PATCH] Remove out-of-scope event step markers from event stream
+ notebook
+
+The event stream notebook carried 751 event step marker comments. Only
+the steps listed in Missing_Event_Stream_Inserts.xlsx are in scope for
+data collection, so any marker outside that list with no SQL written
+against it is noise.
+
+This removes 389 empty markers that are neither listed in
+Missing_Event_Stream_Inserts.xlsx nor have any code in place, plus the
+39 notebook cells left empty as a result.
+
+Kept in full:
+- all 284 step ids listed in Missing_Event_Stream_Inserts.xlsx
+- all 143 markers that already have SQL against them (inserts, count
+  queries, staging table builds and exploratory selects)
+
+362 markers remain. Every non-comment SQL line is byte for byte
+unchanged, verified by diff.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MEWc5KY6FCfLMaPieR9TLE
+---
+ .../03 - Populate Episode Event Stream.py     | 577 ------------------
+ 1 file changed, 577 deletions(-)
+
+diff --git a/scratchCode/03 - Populate Episode Event Stream.py b/scratchCode/03 - Populate Episode Event Stream.py
+index acf1d0c..20db631 100644
+--- a/scratchCode/03 - Populate Episode Event Stream.py	
++++ b/scratchCode/03 - Populate Episode Event Stream.py	
+@@ -496,18 +496,6 @@ Order by 1
+ # In[ ]:
+ 
+ 
+---A0.C
+-
+-
+-# In[ ]:
+-
+-
+---A0.C.F1
+-
+-
+-# In[ ]:
+-
+-
+ --A1
+ 
+ insert INTO
+@@ -606,12 +594,6 @@ FROM
+ # In[ ]:
+ 
+ 
+---A0.1
+-
+-
+-# In[ ]:
+-
+-
+ --A0.F1
+ 
+ insert INTO
+@@ -665,18 +647,6 @@ and     CallWaitTime > 0
+ # In[ ]:
+ 
+ 
+---A2.E1.F1
+-
+-
+-# In[ ]:
+-
+-
+---A2.E1.F2
+-
+-
+-# In[ ]:
+-
+-
+ --A3
+ 
+ insert INTO
+@@ -792,24 +762,12 @@ JOIN
+ # In[ ]:
+ 
+ 
+---A3.B1.F1
+-
+-
+-# In[ ]:
+-
+-
+ --A3.E1
+ 
+ 
+ # In[ ]:
+ 
+ 
+---A3.E2
+-
+-
+-# In[ ]:
+-
+-
+ --A4a
+ 
+ insert INTO
+@@ -917,12 +875,6 @@ and     a.Channel = 'b) Web Assist'
+ # In[ ]:
+ 
+ 
+---A4.F2
+-
+-
+-# In[ ]:
+-
+-
+ --A4b.O1
+ 
+ 
+@@ -960,12 +912,6 @@ where   PaymentDate >= '{run_start}' and PaymentDate < '{run_end}'
+ # In[ ]:
+ 
+ 
+---A5b
+-
+-
+-# In[ ]:
+-
+-
+ --A5.F1
+ 
+ insert INTO
+@@ -1031,42 +977,6 @@ and     FullPaymentFlag is FALSE
+ # In[ ]:
+ 
+ 
+---A5.B1.F1
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.F2
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.F3
+-
+-
+-# In[ ]:
+-
+-
+---A5.B2
+-
+-
+-# In[ ]:
+-
+-
+---A5.B3
+-
+-
+-# In[ ]:
+-
+-
+---A5.B3.F1
+-
+-
+-# In[ ]:
+-
+-
+ --A5.1
+ 
+ insert INTO
+@@ -1229,12 +1139,6 @@ and Campaign = 'DAY 20'
+ # In[ ]:
+ 
+ 
+---A6.F2
+-
+-
+-# In[ ]:
+-
+-
+ --A6.B1
+ 
+ 
+@@ -1317,84 +1221,6 @@ and     EventDescription in
+ # In[ ]:
+ 
+ 
+---A5.B1.1
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.2
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.3
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.4
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.5
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.O1
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.O2
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC1
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC2
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC3
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC4
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC5
+-
+-
+-# In[ ]:
+-
+-
+---A5.B1.PC.O1
+-
+-
+-# In[ ]:
+-
+-
+ --A6.B1.1
+ 
+ 
+@@ -1731,7 +1557,6 @@ and     EventDescription in (
+ # In[ ]:
+ 
+ 
+---R0
+ --RO.F1
+ --R0.B1
+ --RO.F2
+@@ -1798,11 +1623,8 @@ Group by a.SourcePolicyReference
+ # In[ ]:
+ 
+ 
+---R1.B1
+ --R1.B2
+ --R1.E1
+---R1.E1.F1
+---R1.E1.F2
+ --R1.E1.F3
+ 
+ 
+@@ -1881,13 +1703,6 @@ group by a.PolicyCode
+ # In[ ]:
+ 
+ 
+---R2.F2
+---R2.F3
+-
+-
+-# In[ ]:
+-
+-
+ --R2.B1
+ insert INTO
+ ods.EpisodeEventStream
+@@ -1958,7 +1773,6 @@ group by a.PolicyCode
+ 
+ 
+ --R2.E1
+---R2.E1.F1
+ 
+ 
+ # In[ ]:
+@@ -2100,12 +1914,6 @@ stg.R0_genesys_derived_data
+ # In[ ]:
+ 
+ 
+---R3.F2
+-
+-
+-# In[ ]:
+-
+-
+ --R3.B1
+ insert INTO
+ ods.EpisodeEventStream
+@@ -2135,7 +1943,6 @@ and     trim(a.pl_status) = 'L'
+ # In[ ]:
+ 
+ 
+---R3.B2
+ --R3.O1
+ --R4
+ 
+@@ -2178,7 +1985,6 @@ group by a.PolicyCode
+ # In[ ]:
+ 
+ 
+---R4.F2
+ --R4.B2
+ 
+ 
+@@ -2222,12 +2028,6 @@ Group by PolicyCode
+ # In[ ]:
+ 
+ 
+---R4b
+-
+-
+-# In[ ]:
+-
+-
+ --R4c
+ insert INTO
+ ods.EpisodeEventStream
+@@ -2265,15 +2065,6 @@ Group by PolicyCode
+ # In[ ]:
+ 
+ 
+---R4c.F1
+---R4c.B1
+---R4c.B1.F1
+---R4c.B2
+-
+-
+-# In[ ]:
+-
+-
+ --R5
+ insert INTO
+ ods.EpisodeEventStream
+@@ -2318,13 +2109,6 @@ Group by a.PolicyCode
+ # In[ ]:
+ 
+ 
+---R5.F1
+---R5.F2
+-
+-
+-# In[ ]:
+-
+-
+ --R6
+ insert INTO
+ ods.EpisodeEventStream
+@@ -2465,12 +2249,6 @@ Where b.PolicyCode is null;
+ # In[ ]:
+ 
+ 
+---R2.B1.4
+-
+-
+-# In[ ]:
+-
+-
+ --R2.B1.4.F1
+ insert INTO
+ ods.EpisodeEventStream
+@@ -2590,14 +2368,7 @@ and     TyReportingSaleDate is null;
+ --R3.B1.3
+ --R3.B1.4
+ --R3.B1.O1
+---R3.B1.O2
+ --R3.B1.O3
+---R4c.B1.1
+---R4c.B1.2
+---R4c.B1.3
+---R4c.B1.4
+---R4c.B1.5
+---R4c.B1.O1
+ --R6.F1
+ --R6.B1
+ 
+@@ -2830,8 +2601,6 @@ group by a.PolicyCode;
+ 
+ --R6.B1.1
+ --R6.B1.2
+---R6.B1.3
+---R6.B1.4
+ 
+ 
+ # In[ ]:
+@@ -2870,10 +2639,6 @@ and     EventDescription like 'Duplicate Certificate%';
+ 
+ # In[ ]:
+ 
+---HA0.C
+-
+-# In[ ]:
+-
+ --HA1
+ Create Or Replace Table stg.HA1_HFQ_Quotes_Raw as 
+ SELECT  *, 	
+@@ -2995,8 +2760,6 @@ where Quotes_Premium > 0
+ and Quotes_Outcome = 'PremiumReturned'
+ and Quotes_DateCreated between '2026-07-01' and '2026-07-31'
+ 
+---HA3.B1
+---HA3.B1.F1
+ --HA3.F1
+ 
+ # In[ ]:
+@@ -3068,12 +2831,6 @@ and isFullPayment = 'false'
+ 
+ # In[ ]:
+ 
+---HA5.B1.F1
+---HA5.B1.PC
+---HA5.F2
+-
+-# In[ ]:
+-
+ --HA5.1
+ 
+ SELECT
+@@ -3142,7 +2899,6 @@ and     EventDescription in
+ # In[ ]:
+ 
+ --HA7.B1
+---HA7.F1
+ --HA7.B1.1
+ 
+ # In[ ]:
+@@ -3212,20 +2968,9 @@ Or EventDescription like '%Terms Of Business'
+ 
+ # In[ ]:
+ 
+---HA3.B1.1
+---HA3.B1.2
+---HA3.B1.O1
+---HA5.B1.1
+---HA5.B1.2
+---HA5.B1.3
+---HA5.B1.4
+---HA5.B1.5
+---HA5.B1.O1
+---HA5.B1.O2
+ --HA6.B1.1
+ --HA6.B1.2
+ --HA6.B1.4
+---HA6.B1.5
+ --HA6.B1.3
+ --HA6.B1.O1
+ --HA6.B1.6
+@@ -3271,11 +3016,6 @@ Group by SourcePolicyReference
+ 
+ # In[ ]:
+ 
+---HR1.E2
+---HR1.E2.F1
+-
+-# In[ ]:
+-
+ --HR2
+ 
+ select  count(*), count(distinct ClientCode), count(distinct PolicyCode)
+@@ -3292,7 +3032,6 @@ and     b.`Timestamp` < a.RenewalEndDate
+ # In[ ]:
+ 
+ --HR2.F1
+---HR2.F2
+ 
+ # In[ ]:
+ 
+@@ -3357,7 +3096,6 @@ and     Channel = 'a) IB'
+ # In[ ]:
+ 
+ --HR3b.F1
+---HR3.F2
+ 
+ # In[ ]:
+ 
+@@ -3386,7 +3124,6 @@ Where PolicyRetNum = 1
+ 
+ # In[ ]:
+ 
+---HR4.F1
+ --HR4.B2
+ --HR4.B2.F1
+ 
+@@ -3409,10 +3146,6 @@ Group by ClientCode, PolicyCode
+ 
+ # In[ ]: 
+ 
+---HR4b
+-
+-# In[ ]: 
+-
+ --HR4c
+ 
+ -- HR4a and HR4c -- Possible loan but old finance or new loan?  
+@@ -3430,8 +3163,6 @@ Group by PaymentType
+ 
+ # In[ ]: 
+ 
+---HR4c.B1
+---HR4c.B1.F1
+ --HR5
+ --HR6
+ 
+@@ -3498,7 +3229,6 @@ limit 100
+ # In[ ]: 
+ 
+ --HR2.B1.2.F1
+---HR2.B1.3
+ 
+ # In[ ]: 
+ 
+@@ -3540,14 +3270,7 @@ limit 10
+ --HR3.B1.2
+ --HR3.B1.2.F1
+ --HR3.B1.O1
+---HR3.B1.O2
+ --HR3.B1.O3
+---HR4c.B1.1
+---HR4c.B1.2
+---HR4c.B1.3
+---HR4c.B1.4
+---HR4c.B1.5
+---HR4c.B1.O1
+ 
+ # In[ ]: 
+ 
+@@ -3625,16 +3348,10 @@ select count(*) from (
+ --HR4.B2.6
+ --HR6.B1.1
+ --HR6.B1.2
+---HR6.B1.3
+---HR6.B1.4
+ --HR6.B1.5
+---HM0
+---HM0.1
+---HM0.1.F1
+ --HM1
+ --HM1.F1
+ --HM2
+---HM2.F1
+ --HM2.O1
+ 
+ select  count(distinct a.PolicyCode)
+@@ -3701,7 +3418,6 @@ and     a.PolicyCode in
+ --HM4
+ --HM4.F1
+ --HM4a
+---HM4b
+ --HM4c
+ 
+ select  Count(distinct b.PolicyCode), sum(CCYGrossPremium), sum(CCYFees)
+@@ -3714,10 +3430,7 @@ and     (
+         and 
+             CCYFees = 0 )
+ 
+---HM4b.B1
+---HM4b.B1.F1
+ --HM5
+---HM5.F1
+ --HM6
+ 
+ select  count(distinct SourcePolicyReference) 
+@@ -3737,17 +3450,7 @@ and     (   EventDescription like '%Emailed Document%'
+             EventDescription like '%Document Transmitted%'
+         )
+ 
+---HM6.F1
+ --HM6.B1
+---HM.V1
+---HM.V2
+---HM.V3
+---HM.V4
+---HM.V5
+---HM.V6
+---HM.V0
+---HM4b.B1.1
+---HM4b.B1.2
+ --HM4.B1.1
+ 
+ SELECT  count(distinct a.PolicyCode)
+@@ -3948,9 +3651,6 @@ and     a.PolicyCode = d.SourcePolicyReference
+ 
+ --HM6.B1.2
+ --HM6.B1.3
+---HM6.B1.4
+---HM6.B1.5
+---HC0
+ --HC1a
+ 
+ Create or Replace Table stg.JulyHomeCancellations as 
+@@ -3979,7 +3679,6 @@ Where   PolicyTypeGroup = 'Home'
+ and     EffectiveDate = '2026-07-31'
+ and     ShortDescription like '%NCT%'
+ 
+---HC1b
+ --HC1b.F1
+ --HC2
+ 
+@@ -4020,7 +3719,6 @@ from    (select  PolicyCode
+         stg.JulyHomeCancellations   b
+ Where   left(a.PolicyCode,6) = b.ClientCode 
+ 
+---HC3.F1
+ --HC4
+ 
+ select  Count(distinct SourcePolicyReference) 
+@@ -4037,8 +3735,6 @@ and     (   a.EventDescription like '%Emailed Document%'
+             a.EventDescription like '%Document Transmitted%'
+         )
+ 
+---HC4.F1
+---HC4.O1
+ --HC5
+ 
+ select  Count(distinct SourcePolicyReference) 
+@@ -4055,60 +3751,21 @@ and     (   a.EventDescription like '%Emailed Document%'
+         ) 
+ 
+ --HC6
+---HC7
+---HC7.F1
+---HC.O1
+---HC.IN1
+---HC.IN2
+---HC.IN3
+---HC.IN4
+---HC.IN5
+---HC.IN6
+---HC.IN7
+---HARR.0
+ --HARR.1
+ --HARR.2
+ --HARR.O1
+---HARR.B1
+---HARR.B1.F1
+ --HARR.3
+---HARR.B2
+---HARR.B2.F1
+---HARR.4
+---HARR.F1
+ --HARR.O2
+---HARR.B1.1
+---HARR.B1.2
+---HARR.B1.O1
+---HCL0
+ --HCL1a
+ --HCL1b
+ --HCL1c
+---HCL2
+---HCL3
+---HCL3.F1
+ --HCL4
+---HCL4.F1
+---HCL.O1
+ --HCL.O2
+---HD0
+ --HD1
+ --HD1.F1
+ --HD2
+---HD2.F1
+---HD3
+ --HD3.F1
+ --HD3.F2
+---HD.V1
+---HD.V2
+---HD.V3
+---HD.V4
+---HD.V5
+---HD.V6
+---HAP.1
+---M0
+---M0.1
+---M0.1.F1
+ 
+ --M1
+ 
+@@ -4184,32 +3841,15 @@ SELECT
+ from    stg.A0_genesys_derived_data a, stg.AbandonedMTACalls b 
+ Where   a.ConversationId = b.ConversationId 
+ 
+---M2
+---M2.F1
+---M2.O1
+ --M3
+---M3.B1
+---M3.B1.F1
+ --M4
+---M4.F1
+ --M4a
+---M4b
+---M4c
+---M4b.B1
+---M4b.B1.F1
+---M4b.B1.1
+---M4b.B1.2
+ --M5
+---M5.F1
+ --M6
+---M6.F1
+---M6.B1
+ --M.V1
+ --M.V2
+ --M.V3
+ --M.V4
+---M.V5
+---M.V6
+ --M3.B1.1
+ 
+ insert INTO
+@@ -4300,21 +3940,11 @@ and     PolicyTypeGroup = 'Motor'
+ and     `Timestamp` > '2026-07-01 00:00:00.000' 
+ ;
+ 
+---M3.B1.O1
+ --M3.B1.6
+---M6.B1.1
+---M6.B1.2
+---M6.B1.3
+---M6.B1.4
+---M6.B1.5
+---C0
+ --C1a
+ --C1a.F1
+---C1b
+---C1b.IN1
+ --C2
+ --C3
+---C3.F1
+ --C4
+ 
+ Create or replace table tmp.MotorEscalated20days as 
+@@ -4391,61 +4021,20 @@ from
+     tmp.MotorEscalated20days y 
+ Where     SourcePolicyReference = PolicyCode
+ 
+---C4.O1
+ --C5
+---C5.O1
+---C5.E1
+ --C6
+---C7
+---C7.F1
+---ARR.0
+ --ARR.1
+ --ARR.2
+ --ARR.O1
+---ARR.B1
+---ARR.B1.F1
+ --ARR.3
+---ARR.B2
+---ARR.B2.F1
+---ARR.4
+---ARR.F1
+ --ARR.O2
+---ARR.B1.1
+---ARR.B1.2
+---ARR.B1.O1
+---IL1
+---IL2
+---IL3
+---IL4
+---IL.O1
+---IL.O2
+---CL0
+ --CL1a
+---CL1b
+---CL1c
+---CL2
+---CL3
+---CL3.F1
+---CL4
+---CL4.F1
+---CL.O1
+---CL.O2
+---D0
+ --D1
+ --D1.F1
+ --D2
+---D2.F1
+---D3
+ --D3.F1
+ --D3.F2
+ --D.V1
+---D.V2
+---D.V3
+---D.V4
+---D.V5
+---D.V6
+---VR0
+---VR0.1
+ --VR1a
+ 
+ Create or Replace Table stg.VanRenewals as 
+@@ -4538,19 +4127,13 @@ and     interaction_type = 'sent'
+ and     MessageType  in ( 'EMAIL', 'SMS') 
+ group by UserID
+ 
+---VR1.E1.F1
+---VR2.F1
+---VR2.B1
+---VR2.B1.F1
+ --VR2
+ --VR3a
+ --VR3b
+ --VR3b.F1
+---VR3.F2
+ --VR3.B1
+ 
+ 
+-
+ insert INTO
+ ods.EpisodeEventStream
+ (        
+@@ -4580,34 +4163,14 @@ group by UserID
+ 
+ --VR3.O1
+ --VR4
+---VR4.F1
+---VR4.B2
+ --VR4.B2.F1
+---VR4c
+---VR4c.B1
+---VR4c.B1.F1
+ --VR5
+---VR6
+---VR6.F1
+ --VR6.B1
+---VR2.B1.1
+---VR2.B1.2
+---VR2.B1.2.F1
+---VR2.B1.O1
+---VR2.B1.O2
+---VR2.B1.O3
+ --VR3.B1.1
+ --VR3.B1.2
+ --VR3.B1.2.F1
+ --VR3.B1.O1
+---VR3.B1.O2
+ --VR3.B1.O3
+---VR4c.B1.1
+---VR4c.B1.2
+---VR4c.B1.3
+---VR4c.B1.4
+---VR4c.B1.5
+---VR4c.B1.O1
+ --VR4.B2.1
+ --VR4.B2.2
+ --VR4.B2.4
+@@ -4616,11 +4179,6 @@ group by UserID
+ --VR4.B2.O1
+ --VR4.B2.6
+ --VR6.B1.1
+---VR6.B1.2
+---VR6.B1.3
+---VR6.B1.4
+---VR6.B1.5
+---VA0.C
+ --VA1
+ 
+ insert INTO
+@@ -4655,7 +4213,6 @@ and     QuoteType in ('FQ','QQ')
+ AND     QuoteStartDateTime between '2026-07-01 00:00:00.000' and  '2026-08-01 00:00:00.000' 
+ Group by Email 
+ 
+---VA1.F1
+ --VA0.F1
+ 
+ Create or Replace Table stg.Van_genesys_inbound_call_duration_summary as 
+@@ -4691,9 +4248,6 @@ from	stg.Van_genesys_inbound_call_duration_summary a
+ Where   abandoned > 0 
+ group by a.conversationId;
+ 
+---VA4b
+---VA4.F1
+---VA4b.O1
+ --VA0
+ 
+ Create or Replace Table stg.Van_genesys_derived_data_filtered as 
+@@ -4798,21 +4352,12 @@ WHERE   QuoteStartDateTime between '2026-07-01 00:00:00.000' and  '2026-08-01 00
+ and     PaymentStatus = 'Success'
+ and     PaymentType = 'Instalments'
+ 
+---VA5.B1.F1
+ --VA6
+---VA6.F1
+ --VA6.B1
+ --VA6.B1.F1
+ --VA7
+---VA7.F1
+ --VA7.B1
+---VA5.B1.1
+---VA5.B1.2
+---VA5.B1.3
+ --VA5.B1.4
+---VA5.B1.5
+---VA5.B1.O1
+---VA5.B1.PC1
+ --VA6.B1.1
+ --VA6.B1.2
+ --VA6.B1.4
+@@ -4987,7 +4532,6 @@ and     EventDescription in
+             )
+             
+ --VA7.B1.3
+---VA7.B1.4
+ --VA7.B1.5
+ 
+ insert INTO
+@@ -5022,39 +4566,15 @@ and     EventDescription in
+                 'New Business - Printed Document - CD Issue Letter MTA'
+             )
+             
+---VM0
+---VM0.1
+---VM0.1.F1
+ --VM1
+ --VM1.F1
+---VM2
+---VM2.F1
+ --VM2.O1
+ --VM3
+ --VM3.B1
+ --VM3.B1.F1
+---VM4
+---VM4.F1
+---VM4a
+---VM4b
+ --VM4c
+---VM4b.B1
+---VM4b.B1.F1
+---VM5
+---VM5.F1
+ --VM6
+---VM6.F1
+ --VM6.B1
+---VM4b.B1.1
+---VM4b.B1.2
+---VM.V0
+---VM.V1
+---VM.V2
+---VM.V3
+---VM.V4
+---VM.V5
+---VM.V6
+---VM3.B1.1
+ --VM3.B1.2
+ --VM3.B1.4
+ --VM3.B1.5
+@@ -5066,71 +4586,26 @@ and     EventDescription in
+ --VM6.B1.3
+ --VM6.B1.4
+ --VM6.B1.5
+---VC0
+ --VC1a
+---VC1a.F1
+---VC1b
+ --VC1b.F1
+ --VC2
+ --VC3
+---VC3.F1
+ --VC4
+---VC4.F1
+---VC4.O1
+ --VC5
+ --VC6
+---VC7
+---VC7.F1
+---VC.O1
+---VC.IN1
+---VC.IN2
+---VC.IN3
+---VC.IN4
+---VC.IN5
+---VC.IN6
+---VC.IN7
+---VARR.0
+ --VARR.1
+ --VARR.2
+ --VARR.O1
+---VARR.B1
+---VARR.B1.F1
+ --VARR.3
+---VARR.B2
+---VARR.B2.F1
+ --VARR.4
+---VARR.F1
+ --VARR.O2
+---VARR.B1.1
+---VARR.B1.2
+---VARR.B1.O1
+---VCL0
+ --VCL1a
+---VCL1b
+---VCL1c
+---VCL2
+---VCL3
+---VCL3.F1
+---VCL4
+---VCL4.F1
+---VCL.O1
+---VCL.O2
+---VD0
+ --VD1
+ --VD1.F1
+ --VD2
+---VD2.F1
+---VD3
+ --VD3.F1
+ --VD3.F2
+ --VD.V1
+---VD.V2
+---VD.V3
+---VD.V4
+---VD.V5
+---VD.V6
+---VAP.1
+---TA0
+ --TA1
+ 
+ insert INTO
+@@ -5206,19 +4681,10 @@ SELECT
+ from   stg.TravelQuotes
+ where  RenewalFlag = 0
+ 
+---TA1.F1
+---TA2
+---TA2.F1
+ --TA3a
+ 
+ Slightly concerning - their number appears to be both acquisition and renewal
+ 
+---TA3b
+---TA3.F1
+---TA3.B1
+---TA3.B1.F1
+---TA4
+---TA4.F1
+ --TA5
+ 
+ insert INTO
+@@ -5246,50 +4712,7 @@ from   stg.TravelQuotes
+ where travel_purchaseDate between  '2026-07-01' and '2026-07-31'	
+ and RenewalFlag = 0
+ 
+---TA5.F1
+---TA6.B1
+---TA3.B1.1
+ --TA3.B1.2
+---TA3.B1.O1
+---TA6.B1.1
+---TA6.B1.2
+---TA6.B1.F1
+---TR1
+---TR1.F1
+ --TR1.E1
+---TR2
+---TR3a
+---TR3b
+---TR3.F1
+ --TR4
+---TR4.B1
+---TR5
+---TR5.F1
+---TR5.B1
+ --TR.O1
+---TR.O2
+---TR5.B1.1
+---TR5.B1.2
+---TR5.B1.F1
+---TR5.B1.3
+---TM0
+---TM1
+---TM1.F1
+---TM2
+---TM2.F1
+---TM3
+---TM.O1
+---TM.O2
+---TC0
+---TC1
+---TC1.IN1
+---TC1.F1
+---TC2
+---TC2.F1
+---TC.O1
+---TCL0
+---TCL1
+---TCL1.F1
+---TCL2
+---TCL2.F1
+---TCL.O1
+\ No newline at end of file
+-- 
+2.43.0
+
