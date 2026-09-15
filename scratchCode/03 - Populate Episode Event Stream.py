@@ -6724,7 +6724,65 @@ and Campaign = 'DAY 1'
 Group by b.SourcePolicyReference
 
 --M3.B1.2
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        b.SourcePolicyReference,
+        1,
+        'Motor',
+        max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
+        max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
+        'M3.B1.1',
+        'Motor MTA - Chase, escalation',
+        'Policy'
+from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b, dlk.MyChill_NewUploadDocumentEvents  c 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-07-01' and '2026-07-31' 
+and     PolicyTypeGroup = 'Motor' and a.PolicyCode = b.SourcePolicyReference 
+and     Campaign = 'DAY 1'
+and     a.PolicyCode = c.PolicyCode
+and     PolicyTypeGroup = 'Motor'
+and     `Timestamp` > '2026-07-01 00:00:00.000' 
+
 --M3.B1.4
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        b.SourcePolicyReference,
+        1,
+        'Motor',
+        max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
+        max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
+        'M3.B1.1',
+        'Motor MTA - Chase, escalation',
+        'Policy'
+from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
+and PolicyTypeGroup = 'Motor' and a.PolicyCode = b.SourcePolicyReference 
+and Campaign = 'DAY 1'
+Group by b.SourcePolicyReference
+
 --M3.B1.5
 
 insert INTO
