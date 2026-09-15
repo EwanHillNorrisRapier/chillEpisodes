@@ -528,10 +528,12 @@ FROM
 
 --A1.E1
 
+--no service grid data, assume same s A1
+
 insert INTO
 ods.EpisodeEventStream
 (        
-    SourcePolicyReference,
+    SourceQuoteReference,    
     SourceSystemId,          
     PolicyTypeGroup,         
     EventDateTime,           
@@ -541,21 +543,16 @@ ods.EpisodeEventStream
     Grain
 )
 SELECT
-        a.QuoteQueryGuid,
-        1,
-        'Motor',
-        date_trunc('MINUTE', `timestamp`),
-        cast(`timestamp` as date),
-        'A1.E1',
-        'Motor Acquisition - Service retrieve',
-        'Quote'
-from    dlk.EXT_XtremePushResults
-where	`timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and		campaign_name like 'Motor % TYR %' 
-and     interaction_type = 'sent' 
-and     MessageType = 'EMAIL'
-and     QuoteQueryGuid > ''
-("")
+    QuoteQueryGuid,
+    2,
+    'Motor',
+    date_trunc('MINUTE', Step1DateTime),
+    cast(Step1DateTime as date),
+    'A1.E1',
+    'Motor Acquisition - Service retrieve',
+    'Quote'
+FROM
+    stg.A1_MotorAcquisitionQuoteInitiated
 
 
 # In[ ]:
@@ -690,6 +687,34 @@ where   FirstStep5DateTime is null
 
 
 --A2.E1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.QuoteQueryGuid,
+        1,
+        'Motor',
+        date_trunc('MINUTE', `timestamp`),
+        cast(`timestamp` as date),
+        'A2.E1',
+        'Motor Acquisition - This year retrieve (TYR)',
+        'Quote'
+from    dlk.EXT_XtremePushResults
+where	`timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+and		campaign_name like 'Motor % TYR %' 
+and     interaction_type = 'sent' 
+and     MessageType = 'EMAIL'
+and     QuoteQueryGuid > ''
 
 
 # In[ ]:
@@ -1243,6 +1268,29 @@ Group by a.PolicyCode
 
 --A3.B1.1
 
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+    QuoteQueryGuid,
+    2,
+    'Motor',
+    date_trunc('MINUTE', Step1DateTime),
+    cast(Step1DateTime as date),
+    'A1.E1',
+    'Motor Acquisition - Service retrieve',
+    'Quote'
+from	stg.a1_motoracquisitionquoteinitiated a, 
+        stg.a1_motoracquisitionquoteinitiated b 
+Where	a.QuoteQueryGuid = b.RetrieveSessionToken
 
 # In[ ]:
 
