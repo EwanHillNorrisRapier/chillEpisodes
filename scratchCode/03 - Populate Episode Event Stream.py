@@ -461,8 +461,8 @@ WHERE	(1=1)
         AND na.ar_addon_ref <> 0 
         AND na.ar_show_on_report = 'Y')
         ) 
-    AND NA.ar_posting_date >= 20260701
-    AND NA.ar_posting_date <= 20260731
+    AND NA.ar_posting_date >= cast(date_format((select startTime from stg.episodeeventstream_buildconfig), 'yyyyMMdd') as int)
+    AND NA.ar_posting_date < cast(date_format((select endTime   from stg.episodeeventstream_buildconfig), 'yyyyMMdd') as int)
     AND pt.PremiumTypeGroup = 'MTA'
 ;
 
@@ -916,7 +916,7 @@ from    stg.GlobalPoliciesSold      a
 Where   a.ReportingSaleType = 'New Business' 
 and     a.PolicyTypeGroup = 'Motor'
 and     a.QuoteQueryGuid is null 
-("")
+
 
 
 # In[ ]:
@@ -1280,13 +1280,14 @@ ods.EpisodeEventStream
     EventDescription,
     Grain
 )
+SELECT
     QuoteQueryGuid,
     2,
     'Motor',
     date_trunc('MINUTE', Step1DateTime),
     cast(Step1DateTime as date),
-    'A1.E1',
-    'Motor Acquisition - Service retrieve',
+    'A3.B1.1',
+    'Motor Acquisition - Quote retrieved or iterated',
     'Quote'
 from	stg.a1_motoracquisitionquoteinitiated a, 
         stg.a1_motoracquisitionquoteinitiated b 
@@ -1838,7 +1839,6 @@ Where   a.ClientCode = b.PortfolioCode
 and     b.`Timestamp` > a.RenewalStartDate
 and     b.`Timestamp` < a.RenewalEndDate
 group by a.PolicyCode
-("")
 
 
 # In[ ]:
@@ -1862,8 +1862,8 @@ SELECT  a.PolicyCode,
         'Motor',
         max(date_trunc('MINUTE', 'Timestamp')),
         max(cast('Timestamp' as date)),
-        'R2',
-        'Motor Renewal - Customer logs in to portal',
+        'R2.F1',
+        'Motor Renewal - Failed login',
         'Policy'
 FROM    (
             select  left(PolicyCode,6) as ClientCode, dateadd(day, -60, RenewalDate) RenewalStartDate, PolicyCode, dateadd(day, 40, RenewalDate) RenewalEndDate
@@ -2051,8 +2051,8 @@ SELECT  TyPolicyCode,
         'Motor',
         max(date_trunc('MINUTE', RenewalStartDate)),
         max(cast(RenewalStartDate as date)),
-        'R3c',
-        'Motor Renewal - Customer renews ONLINE',
+        'R3d',
+        'Motor Renewal - Customer renews on CHAT',
         'Policy' 
 from    edw.tbl_fact_policy_renewals 
 where   RenewalMonth = '2026-07-31' 
@@ -2100,7 +2100,8 @@ from    stg.R3bF1_genesys_inbound_call_duration_summary a,
 stg.R0_genesys_derived_data b 
 where a.abandoned = 1 and a.CallWaitTime > 0 
 and a.ConversationId = b.ConversationId 
-;
+
+Group by a.conversationID;
 
 # In[ ]:
 
@@ -6467,7 +6468,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Home'
@@ -6498,7 +6499,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Home'
@@ -6524,12 +6525,12 @@ SELECT
     'Home',
     date_trunc('MINUTE', max(timestamp)),
     cast(max(timestamp) as date),
-    'HARR.3',
-    'Home Arrears - Loan defaults, arrears not cleared',
+    'HARR.O1',
+    'Home Arrears - Arrears cleared',
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     timestamp < dateadd(day,-28,getdate()) --ensure chaser should have been sent
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
@@ -6537,7 +6538,7 @@ and     PolicyTypeGroup = 'Home'
 and     PolicyCode not in
         (select policycode from dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
          where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-         and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+         and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
          and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
          and     MessageType in ('SMS', 'EMAIL')
          and     PolicyTypeGroup = 'Home')
@@ -6568,7 +6569,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Home'
@@ -6821,7 +6822,8 @@ SELECT
         'M1',
         'Motor MTA - Customer calls Chill with a change request',
         'Call'
-from    stg.A0_genesys_derived_data 
+from    stg.A0_genesys_derived_data a left join stg.VM0_van_phone_numbers b
+        on a.CustomerPhoneNumber = b.CustomerPhone
 Where   QueueName in ('INBOUND_VehicleChangeAddress',
 'INBOUND_VehicleChangeOther',
 'INBOUND_VehicleChange_Perm',
@@ -6829,6 +6831,7 @@ Where   QueueName in ('INBOUND_VehicleChangeAddress',
 'INBOUND_VehicleUpdateLicence',
 'INBOUND_Vehicle_Add_Driver')
 and     originatingDirection = 'inbound' 
+and     b.CustomerPhone is null
 
 --M1.F1
 
@@ -6871,6 +6874,7 @@ SELECT
         'Call'
 from    stg.A0_genesys_derived_data a, stg.AbandonedMTACalls b 
 Where   a.ConversationId = b.ConversationId 
+and     a.CustomerPhoneNumber not in (select CustomerPhone from stg.VM0_van_phone_numbers)
 Group by a.ConversationId
 
 --M3
@@ -6931,16 +6935,17 @@ SELECT
         'Motor',
         max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
         max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
-        'M3.B1.1',
-        'Motor MTA - Chase, escalation',
+        'M3.B1.2',
+        'Motor MTA - Customer submits documents',
         'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b, dlk.MyChill_NewUploadDocumentEvents  c 
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-07-01' and '2026-07-31' 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     PolicyTypeGroup = 'Motor' and a.PolicyCode = b.SourcePolicyReference 
 and     Campaign = 'DAY 1'
 and     a.PolicyCode = c.PolicyCode
 and     PolicyTypeGroup = 'Motor'
-and     `Timestamp` > '2026-07-01 00:00:00.000' 
+and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+Group by b.SourcePolicyReference
 
 --M3.B1.4
 
@@ -6962,8 +6967,8 @@ SELECT
         'Motor',
         max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
         max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
-        'M3.B1.1',
-        'Motor MTA - Chase, escalation',
+        'M3.B1.4',
+        'Motor MTA - Chase, first reminder',
         'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b 
 Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
@@ -6991,7 +6996,7 @@ SELECT
         'Motor',
         max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
         max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
-        'M3.B1.1',
+        'M3.B1.5',
         'Motor MTA - Chase, escalation',
         'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b 
@@ -7020,8 +7025,8 @@ SELECT
         'Motor',
         max(date_trunc('MINUTE', coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01'))),
         max(cast(coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as date)),
-        'M3.B1.1',
-        'Motor MTA - Chase, escalation',
+        'M3.B1.3',
+        'Motor MTA - Documents validated',
         'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a, stg.MotorMTAPolicies  b, dlk.MyChill_NewUploadDocumentEvents  c 
 Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
@@ -7030,7 +7035,8 @@ and     Campaign = 'DAY 1'
 and     a.PolicyCode = c.PolicyCode
 and     PolicyTypeGroup = 'Motor'
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-;
+
+Group by b.SourcePolicyReference;
 
 --M3.B1.6
 --C1a
@@ -7291,7 +7297,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Motor'
@@ -7322,7 +7328,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Motor'
@@ -7348,12 +7354,12 @@ SELECT
     'Motor',
     date_trunc('MINUTE', max(timestamp)),
     cast(max(timestamp) as date),
-    'ARR.3',
-    'Motor Arrears - Loan defaults, arrears not cleared',
+    'ARR.O1',
+    'Motor Arrears - Arrears cleared',
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     timestamp < dateadd(day,-28,getdate()) --ensure chaser should have been sent
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
@@ -7361,7 +7367,7 @@ and     PolicyTypeGroup = 'Motor'
 and     PolicyCode not in
         (select policycode from dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
          where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-         and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+         and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
          and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
          and     MessageType in ('SMS', 'EMAIL')
          and     PolicyTypeGroup = 'Motor')
@@ -7392,7 +7398,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Motor'
@@ -8015,6 +8021,41 @@ Group by a.PolicyCode
 --VR3.B1.O1
 --VR3.B1.O3
 --VR4.B2.1
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.TyPolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', max(a.`timestamp`)),
+    cast(max(a.`timestamp`) as date),
+    'VR4.B2.1',
+    'Van Renewal - Document request issued',
+    'Policy'
+from    stg.VR0_VanPoliciesEligibleForRenewals  a,
+        ods.EventStream                          d 
+Where   a.TyPolicyCode = d.SourcePolicyReference
+and     d.PolicyTypeGroup = 'Van'
+and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDescription in 
+        (
+                'New Business - Saved Document - Document Checklist SMS',
+                'New Business - Saved Document - Document Checklist Email'
+            )
+
+Group by a.TyPolicyCode;
+
 --VR4.B2.2
 -- from XX - Episode Reconciliation - Gaps.html, cell 99 (count query)
 -- header: Van	Renewal	VR4.B2.2
@@ -8378,8 +8419,8 @@ SELECT
         'Travel',
         max(date_trunc('MINUTE', conversationStartTime)),
         max(cast(conversationStartTime as date)),
-        'VA0',
-        'Van Acquisition - Straight into the CALL CENTRE',
+        'VA0.F1',
+        'Van Acquisition - Call wait time, or fails to make contact',
         'Quote'
 from	stg.Van_genesys_inbound_call_duration_summary a 
 Where   abandoned > 0 
@@ -8743,8 +8784,8 @@ SELECT  a.PolicyCode,
         'Motor',
         max(date_trunc('MINUTE', EventDateTime)),
         max(cast(EventDateTime as date)),
-        'VA7.B1.2',
-        'Van Acquisition - Document pack dispatched',
+        'VA7.B1.5',
+        'Van Acquisition - Replacement requested',
         'Policy'
 from    stg.VanSales                             a,
         ods.EventStream                          d 
@@ -8759,21 +8800,474 @@ and     EventDescription in
             )
 Group by a.PolicyCode
             
+
+
 --VM1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.ConversationId,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM1',
+        'Van MTA - Customer calls Chill with a change request',
+        'Call'
+from    stg.A0_genesys_derived_data a join stg.VM0_van_phone_numbers b
+        on a.CustomerPhoneNumber = b.CustomerPhone
+Where   QueueName in ('INBOUND_VehicleChangeAddress',
+'INBOUND_VehicleChangeOther',
+'INBOUND_VehicleChange_Perm',
+'INBOUND_VehicleChange_Temp',
+'INBOUND_VehicleUpdateLicence',
+'INBOUND_Vehicle_Add_Driver')
+and     originatingDirection = 'inbound'
+Group by a.ConversationId
+
 --VM1.F1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.ConversationId,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM1.F1',
+        'Van MTA - Call wait time, or fails to make contact',
+        'Call'
+from    stg.A0_genesys_derived_data a, stg.AbandonedMTACalls b 
+Where   a.ConversationId = b.ConversationId 
+and     a.CustomerPhoneNumber in (select CustomerPhone from stg.VM0_van_phone_numbers)
+Group by a.ConversationId
+
 --VM2.O1
 --VM3
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3',
+        'Van MTA - Customer accepts',
+        'Policy'
+from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+Where   a.PolicyCode = b.PolicyCode
+and     PolicyTypeGroup = 'Van'
+and     PolicyStatusDesc not in (
+    'Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer'
+) 
+group by a.PolicyCode
+
 --VM3.B1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1',
+        'Van MTA - Document intake',
+        'Policy'
+from    stg.JJulyMTAs a, dlk.MyChill_NewUploadDocumentEvents  b 
+Where   a.PolicyCode = b.PolicyCode
+and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+and     b.PolicyCode in 
+        (
+            select  distinct a.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )
+Group by a.PolicyCode
+        
 --VM3.B1.F1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1.F1',
+        'Van MTA - Chases before the customer submits, and documents never submitted',
+        'Policy'
+from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31' 
+and     PolicyTypeGroup = 'Van' 
+and case 
+        When Comp_DDM_Status				= 'O' then 1 
+        When Gap_In_Cov_Ltr_Status			= 'O' then 1 
+        When Val_For_Spec_Item_Status		= 'O' then 1 
+        When PPS_Num_Status					= 'O' then 1 
+        When Identification_Status			= 'O' then 1 
+        When Digital_Journey_Status			= 'O' then 1 
+        When Finance_Form_Status			= 'O' then 1 
+        else 0
+    End = 1 
+and     a.PolicyCode in 
+        (
+            select  distinct a.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )
+Group by a.PolicyCode
+        
 --VM4c
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM4c',
+        'Van MTA - Return premium',
+        'Policy'
+from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+Where   a.PolicyCode = b.PolicyCode
+and     PolicyTypeGroup = 'Van'
+and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+and     ( 
+            CCYGrossPremium = 0 
+        and 
+            CCYFees = 0 )
+group by a.PolicyCode
+
+
 --VM6
+
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Van',
+    date_trunc('MINUTE', max(a.EventDateTime)),
+    cast(max(a.EventDateTime) as date),
+    'VM6',
+    'Van MTA - Cert and disc sent',
+    'Policy'
+from    ods.EventStream
+Where   SourcePolicyReference in 
+        (
+            select  b.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )
+and     EventDate >= (select startTime from stg.episodeeventstream_buildconfig) and EventDate < (select endTime   from stg.episodeeventstream_buildconfig)
+and     EventSourceId = 3 
+and     (   EventDescription like '%Emailed Document%' 
+        or 
+            EventDescription like '%Document Transmitted%'
+        )
+group by a.SourcePolicyReference
+
 --VM6.B1
 --VM3.B1.1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1.1',
+        'Van MTA - Document request issued',
+        'Policy'
+from    stg.JJulyMTAs a, dlk.MyChill_NewUploadDocumentEvents  b 
+Where   a.PolicyCode = b.PolicyCode
+and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+and     b.PolicyCode in 
+        (
+            select  distinct a.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )
+Group by a.PolicyCode
+        
 --VM3.B1.2
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1.2',
+        'Van MTA - Document request issued',
+        'Policy'
+from    stg.JJulyMTAs a, dlk.MyChill_NewUploadDocumentEvents  b 
+Where   a.PolicyCode = b.PolicyCode
+and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+and     b.PolicyCode in 
+        (
+            select  distinct a.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b 
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )
+Group by a.PolicyCode
+        
 --VM3.B1.4
 --VM3.B1.5
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', time_stamp)),
+        max(cast(time_stamp as date)),
+        'VM3.B1.4',
+        'Van MTA - Chase, first reminder',
+        'Policy'
+from    (
+            select  PolicyCode,
+                    coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') as time_stamp
+                    from edw.exp_mychill_chase_daily_snapshot_motorvan a
+            Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig)  
+            and case 
+                    when Gap_In_Cov_Ltr_Status = 'O' then 1 
+                    when Val_For_Spec_Item_Status = 'O' then 1 
+                    when PPS_Num_Status = 'O' then 1 
+                    When Identification_Status = 'O' then 1 
+                    when Finance_Form_Status = 'O' then 1 
+                    when Digital_Journey_Status = 'O' then 1 
+                    else 0
+                End = 1
+            and Campaign = 'DAY 1'
+            and     PolicyCode in 
+            (
+                select  b.PolicyCode
+                from    stg.JJulyMTAs a, stg.JulyPolicyState b
+                Where   a.PolicyCode = b.PolicyCode
+                and     PolicyTypeGroup = 'Van'
+                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+            ) 
+        )
+group by PolicyCode  
+
 --VM3.B1.3
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1.3',
+        'Van MTA - Documents validated',
+        'Policy'
+from    (
+                select  b.PolicyCode
+                from    stg.JJulyMTAs a, stg.JulyPolicyState b
+                Where   a.PolicyCode = b.PolicyCode
+                and     PolicyTypeGroup = 'Van'
+                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+            )  a, dlk.MyChillWorkflow_DocumentStatus  b 
+Where   a.PolicyCode = b.PolicyCode
+and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
+and     isAccepted = 'true'
+group by PolicyCode  
+
 --VM3.B1.O1
+
+insert INTO
+ods.EpisodeEventStream
+(        
+    SourcePolicyReference,
+    SourceSystemId,          
+    PolicyTypeGroup,         
+    EventDateTime,           
+    EventDate,               
+    EventTypeId,     
+    EventDescription,
+    Grain
+)
+SELECT
+        a.PolicyCode,
+        1,
+        'Van',
+        max(date_trunc('MINUTE', conversationStartTime)),
+        max(cast(conversationStartTime as date)),
+        'VM3.B1.O1',
+        'Van MTA - Cancellation, non-receipt',
+        'Policy'
+from    (
+            select  b.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
+        )                                       a,
+        (select  distinct PolicyCode  
+                    from edw.exp_mychill_chase_daily_snapshot_motorvan a
+            Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
+            and case 
+                    when Gap_In_Cov_Ltr_Status = 'O' then 1 
+                    when Val_For_Spec_Item_Status = 'O' then 1 
+                    when PPS_Num_Status = 'O' then 1 
+                    When Identification_Status = 'O' then 1 
+                    when Finance_Form_Status = 'O' then 1 
+                    when Digital_Journey_Status = 'O' then 1 
+                    else 0
+                End = 1
+                )                                b,
+        ods.EventStream                          d 
+Where   d.EventSourceId = 3 
+and     d.PolicyTypeGroup = 'Van'
+and     d.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and d.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)  
+and     EventDescription like '% CXL %' 
+
+and     (   EventDescription like '%Emailed Document%' 
+        or 
+            EventDescription like '%Document Transmitted%'
+        )
+and     a.PolicyCode = d.SourcePolicyReference 
+and     a.PolicyCode = b.PolicyCode
+and     d.EventDescription = 'Prior Year Quotes - Document Transmitted - 10 Day CXL Letter'
+group by a.PolicyCode
+
 --VM3.B1.6
 --VM6.B1.1
 --VM6.B1.2
@@ -9001,7 +9495,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Van'
@@ -9032,7 +9526,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Van'
@@ -9058,12 +9552,12 @@ SELECT
     'Van',
     date_trunc('MINUTE', max(timestamp)),
     cast(max(timestamp) as date),
-    'VARR.3',
-    'Van Arrears - Loan defaults, arrears not cleared',
+    'VARR.O1',
+    'Van Arrears - Arrears cleared',
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     timestamp < dateadd(day,-28,getdate()) --ensure chaser should have been sent
 and     campaign_name = 'Arrears - Chase 1 - 1 Day Past'
 and     MessageType in ('SMS', 'EMAIL')
@@ -9071,7 +9565,7 @@ and     PolicyTypeGroup = 'Van'
 and     PolicyCode not in
         (select policycode from dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
          where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-         and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+         and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
          and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
          and     MessageType in ('SMS', 'EMAIL')
          and     PolicyTypeGroup = 'Van')
@@ -9102,7 +9596,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b 
 where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
-and     timestamp between '2026-07-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig) 
 and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
 and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Van'
@@ -9337,7 +9831,7 @@ SELECT
         'TA3.B1.2',
         'Travel Acquisition - Purchase',
         'Quote'
-edw.tbl_fact_TravelAllQuotesSales a 
+from    edw.tbl_fact_TravelAllQuotesSales a 
 Where   Effective_Date = '2026-07-31' 
 and     travel_purchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and travel_purchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
 and     Business_Type = 'New Business'
