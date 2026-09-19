@@ -31,7 +31,22 @@ Create or Replace Table ods.EpisodeEventStream
 
 
 --Add start and end date variables here
+-- The run window and the snapshot date for this build. Every query in the notebook reads its dates
+-- from here rather than carrying a literal.
+Create or Replace Table stg.episodeeventstream_buildconfig
+(
+    startTime       timestamp,
+    endTime         timestamp,
+    effectiveDate   timestamp
+)
+;
 
+insert into stg.episodeeventstream_buildconfig
+values
+(
+    '2026-07-01', '2026-08-01', '2026-07-31'
+)
+;
 
 # Derived Data
 
@@ -252,7 +267,7 @@ Create or Replace Table stg.MFQInsurersQuoted as
 Create or Replace Table stg.GlobalPoliciesSold as 
 select  PolicyCode, s.Channel, s.ReportingSaleType, s.PolicyTypeGroup, QuoteQueryGuid, HEQReference, ReportingSaleDate 
 from    edw.tbl_fact_policy_sales    s 
-WHERE   s.EffectiveDate = '{effective_date}'
+WHERE   s.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
   AND   s.ReportingSaleCategory = 'Cat A1: Active Sale'
   AND   s.OrgID = 1
   AND   s.SaleCount = 1
@@ -311,7 +326,7 @@ from    ods.EventStream                             a,
 Where   EventDescription like 'Renewal Offer - Emailed Document %'
 and     a.PolicyTypeGroup = 'Motor'
 and     a.SourcePolicyReference = b.PolicyCode 
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 Group by SourcePolicyReference
 ("")
 
@@ -320,7 +335,7 @@ Group by SourcePolicyReference
 
 
 Create or Replace Table stg.MotorRenewalsOnline as 
-select  distinct PolicyCode, SalesSource,,RenewalStartDate
+select  distinct PolicyCode, SalesSource,RenewalStartDate
 from   (select  PolicyCode, 1 SalesSource,RenewalStartDate
         from    (
                     select  left(PolicyCode,6) as ClientCode, dateadd(day, -60, RenewalDate) RenewalStartDate, PolicyCode, dateadd(day, 40, RenewalDate) RenewalEndDate
@@ -342,10 +357,11 @@ from   (select  PolicyCode, 1 SalesSource,RenewalStartDate
         and     b.`Timestamp` > a.RenewalStartDate
         and     b.`Timestamp` < a.RenewalEndDate
         union all
-        select  PolicyCode, 3 , a.EventDateTime
+        select  PolicyCode, 3 , a.PaymentDate
         from    stg.MFQ_Quote_Payments a, stg.RenewalsDoingMFQ  b 
         Where   a.QuotequeryGuId = b.MFQQuotequeryGuId and PaymentType in (0,5)
-        ) x 
+        ) x
+;
 
 
 # In[ ]:
@@ -504,8 +520,659 @@ select	EffectiveDate	,
 		PolicyStatusCode	,
 		PolicyStatusDesc	
 from	edw.tbl_fact_Policy_Mvt 
-where   EffectiveDate = '2026-07-31'
+where   EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 Order by 1 
+
+
+# Derived Data - staging tables moved out of the step cells
+
+# In[ ]:
+
+
+-- stg.R3B1_LapsedThisYearPolicy. Read by step R3.O1 and any step downstream of it.
+Create or Replace Table stg.R3B1_LapsedThisYearPolicy as
+select  distinct b.PolicyCode , b.RenewalDate
+from    dlk.rbsdata2_policy_physical a,
+        stg.R0_MotorPoliciesEligibleForRenewals b
+Where   trim(a.pl_code) = trim(b.PolicyCode)  -- trim is important as the source tables have trailing spaces
+and     trim(a.pl_status) = 'L'
+;
+
+
+# In[ ]:
+
+
+-- stg.HA1_HFQ_Quotes. Read by step HA1 and any step downstream of it.
+Create Or Replace Table stg.HA1_HFQ_Quotes as
+SELECT  *
+FROM    (SELECT  *,
+                CAST(from_unixtime(_ts) AS TIMESTAMP) as ts_unix,
+                ROW_NUMBER() OVER(PARTITION BY QuoteCodeReference, RetrieveCount order by _ts desc) AS RN,
+                COUNT(*)     OVER (PARTITION BY QuoteCodeReference, RetrieveCount) AS MaxRN
+        FROM    dlk.HFQ_QuoteDetails_Snapshot_v2) a
+where   RN = 1
+and     ts_unix >= (select startTime from stg.episodeeventstream_buildconfig) and ts_unix < (select endTime   from stg.episodeeventstream_buildconfig)
+;
+
+
+# In[ ]:
+
+
+-- stg.HA0_genesys_derived_data_filtered. Read by step HA0 and any step downstream of it.
+Create or Replace Table stg.HA0_genesys_derived_data_filtered as
+select	a.ConversationId, a.CustomerPhoneNumber, a.sessionIndex, a.conversationStartTime
+from	stg.A0_genesys_derived_data	a,
+        (select	ConversationId, max(sessionIndex) sessionIndex
+        from	stg.A0_genesys_derived_data
+        Where	queueName is not null
+        and		originatingDirection = 'inbound'
+        Group by ConversationId
+        )	b
+where	a.ConversationId = b.ConversationId
+and		a.sessionIndex = b.sessionIndex
+and		a.queueName = 'INBOUND_SALES_HOME'
+;
+
+
+# In[ ]:
+
+
+-- stg.HA0F1_genesys_inbound_call_duration_summary. Read by step HA0.F1 and any step downstream of it.
+Create or Replace Table stg.HA0F1_genesys_inbound_call_duration_summary as
+select	a.ConversationId, min(a.conversationStartTime) as conversationStartTime,
+        sum(a.agentAnswered) as agentAnswered, sum(a.alertNoAnswer) alertNoAnswer, sum(a.abandoned) abandoned,
+        sum(a.totalAcdWaitDuration) CallWaitTime, sum(a.totalAgentAlertDuration) CallRingTime,
+        sum(a.totalAgentHoldDuration) CallHoldTime, sum(a.totalAgentTalkDuration) CallSpokenTime
+from	stg.A0_genesys_derived_data	a
+where	a.queueName = 'INBOUND_SALES_HOME'
+Group by a.ConversationId
+;
+
+
+# In[ ]:
+
+
+-- stg.HR1a_Home_Renewals_EmailOffered. Read by step HR1a and any step downstream of it.
+Create or Replace Table stg.HR1a_Home_Renewals_EmailOffered as
+select  SourcePolicyReference, min(EventDateTime) OfferedDateTime
+from    ods.EventStream                             a,
+        stg.R0_HomePoliciesEligibleForRenewals     b
+Where   EventDescription like 'Renewal Offer - Emailed Document %'
+and     a.PolicyTypeGroup = 'Home'
+and     a.SourcePolicyReference = b.PolicyCode
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
+Group by SourcePolicyReference
+;
+
+
+# In[ ]:
+
+
+-- stg.HR1b_Home_Renewals_PostOffered. Read by step HR1b and any step downstream of it.
+Create or Replace Table stg.HR1b_Home_Renewals_PostOffered as
+select  SourcePolicyReference, min(EventDateTime) OfferedDateTime
+from    ods.EventStream a, stg.R0_HomePoliciesEligibleForRenewals b
+Where   EventDescription like 'Renewal Offer - Document Transmitted %'
+and     a.PolicyTypeGroup = 'Home'
+and     a.SourcePolicyReference = b.PolicyCode
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
+Group by SourcePolicyReference
+;
+
+
+# In[ ]:
+
+
+-- stg.HomeRenewalScvCustomerKeys. Read by step HR2.B1 and any step downstream of it.
+Create or Replace Table stg.HomeRenewalScvCustomerKeys as
+select  distinct scv_customer_key , PolicyCode, ClientCode
+from    ods.scv_customer_key  a, (select PolicyCode, left(PolicyCode,6) as ClientCode from stg.R0_HomePoliciesEligibleForRenewals) b
+Where   a.SourceSystemReference = b.ClientCode
+and     a.SourceSystemId = 1
+;
+
+
+# In[ ]:
+
+
+-- stg.HomeRenewalsDoingHFQ. Read by step HR2.B1 and any step downstream of it.
+Create or Replace Table stg.HomeRenewalsDoingHFQ as
+select  distinct a.scv_customer_key, a.PolicyCode, b.QuoteCodeReference, ts_unix as QuoteStartDateTime
+from    stg.HomeRenewalScvCustomerKeys a, stg.HFQ_Quotes b, ods.scv_customer_key c
+Where   a.scv_customer_key = c.scv_customer_key
+and     b.QuoteCodeReference = c.SourceSystemReference
+and     ts_unix between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
+and     SourceSystemId = 3
+;
+
+
+# In[ ]:
+
+
+-- stg.HR3B1_LapsedThisYearPolicy. Read by step HR3.B1 and any step downstream of it.
+Create or Replace Table stg.HR3B1_LapsedThisYearPolicy as
+select  distinct b.PolicyCode , b.RenewalDate
+from    dlk.rbsdata2_policy_physical a,
+        stg.R0_HomePoliciesEligibleForRenewals b
+Where   trim(a.pl_code) = trim(b.PolicyCode)  -- trim is important as the source tables have trailing spaces
+and     trim(a.pl_status) = 'L'
+;
+
+
+# In[ ]:
+
+
+-- stg.HR4_HomeRenewalsOnlinePayments. Read by step HR4a and any step downstream of it.
+Create or Replace Table stg.HR4_HomeRenewalsOnlinePayments as
+select  ClientCode, PolicyCode, max(`Timestamp`) PaymentDateTime
+from    (
+            select  left(PolicyCode,6) as ClientCode, dateadd(day, -60, RenewalDate) RenewalStartDate, PolicyCode, dateadd(day, 40, RenewalDate) RenewalEndDate
+            from stg.R0_HomePoliciesEligibleForRenewals
+        )   a,
+        dlk.AppliedRenewals_PaymentSuccess b
+Where   a.ClientCode = b.PortfolioCode
+and     b.`Timestamp` > a.RenewalStartDate
+and     b.`Timestamp` < a.RenewalEndDate
+Group by ClientCode, PolicyCode
+;
+
+
+# In[ ]:
+
+
+-- stg.HR2B1_1_Base. Read by step HR2.B1.1 and any step downstream of it.
+Create or Replace Table stg.HR2B1_1_Base as
+SELECT  distinct b.PolicyCode, b.QuoteCodeReference, b.QuoteStartDatetime , RenEURPremOffer, TYEURGrossPremium, PolicyRetNum
+FROM    stg.HomeRenewalsDoingHFQ                b,
+        stg.R0_HomePoliciesEligibleForRenewals  c,
+        edw.tbl_fact_policy_renewals d
+Where   b.PolicyCode = c.PolicyCode
+and     b.policycode = d.policycode
+and     b.QuoteStartDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1)
+;
+
+
+# In[ ]:
+
+
+-- stg.AbandonedHomeMTACalls. Read by step HM1.F1 and any step downstream of it.
+Create or Replace Table stg.AbandonedHomeMTACalls as 
+select distinct ConversationId
+from 
+(select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
+            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
+            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
+from	stg.A0_genesys_derived_data	a
+where	a.queueName in ('INBOUND_HomeChangeOther',
+'INBOUND_HomeChangeBuildCost')
+and abandoned = 1 and totalAcdWaitDuration > 0 
+Group by ConversationId) x
+;
+
+
+# In[ ]:
+
+
+-- stg.JulyHomeCancellations. Read by step HC1a and any step downstream of it.
+Create or Replace Table stg.JulyHomeCancellations as
+select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
+from    edw.tbl_fact_policy_mtc
+Where   PolicyTypeGroup = 'Home'
+and     EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
+;
+
+
+# In[ ]:
+
+
+-- stg.JulyMotorCancellations. Read by step HC1a and any step downstream of it.
+Create or Replace Table stg.JulyMotorCancellations as
+select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
+from    edw.tbl_fact_policy_mtc
+Where   PolicyTypeGroup = 'Motor'
+and     EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
+;
+
+
+# In[ ]:
+
+
+-- stg.JulyVanCancellations. Read by step HC1a and any step downstream of it.
+Create or Replace Table stg.JulyVanCancellations as
+select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
+from    edw.tbl_fact_policy_mtc
+Where   PolicyTypeGroup = 'Van'
+and     EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
+;
+
+
+# In[ ]:
+
+
+-- stg.AbandonedMTACalls. Read by step M1.F1 and any step downstream of it.
+Create or Replace Table stg.AbandonedMTACalls as 
+select distinct ConversationId
+from 
+(select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
+            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
+            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
+from	stg.A0_genesys_derived_data	a
+where	a.queueName in ('INBOUND_VehicleChangeAddress',
+'INBOUND_VehicleChangeOther',
+'INBOUND_VehicleChange_Perm',
+'INBOUND_VehicleChange_Temp',
+'INBOUND_VehicleUpdateLicence',
+'INBOUND_Vehicle_Add_Driver')
+and abandoned = 1 and totalAcdWaitDuration > 0 
+Group by ConversationId) x
+;
+
+
+# In[ ]:
+
+
+-- stg.MotorEscalated20days. Read by step C4 and any step downstream of it.
+Create or replace table stg.MotorEscalated20days as 
+select  
+		distinct PolicyCode 
+from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
+and PolicyType = 'New Business' 
+and PolicyTypeGroup = 'Motor' 
+and case 
+        when Sign_Prop_Status				= 'O' then 1 
+        when Sign_Stat_Of_Fact_Status		= 'O' then 1 
+        when Comp_Fin_Agree_Status			= 'O' then 1 
+        when Comp_DDM_Status				= 'O' then 1 
+        when Proof_Of_NCB_Status			= 'O' then 1 
+        when Trans_Proof_Of_NCB_Status		= 'O' then 1 
+        when Ltr_Of_Driv_Exp_Status			= 'O' then 1 
+        when Prop_Driv_Lic_Status			= 'O' then 1 
+        when Nam_Driv_Lic_Status			= 'O' then 1 
+        when Gap_In_Cov_Ltr_Status			= 'O' then 1 
+        when `2ndCar_Cert_Status`			= 'O' then 1 
+        when Doc_Ltr_Status					= 'O' then 1 
+        when Engineers_Rpt_Status			= 'O' then 1 
+        when NCT_Status						= 'O' then 1 
+        when Veh_Lic_Cert_Status			= 'O' then 1 
+        when Irish_Reg_Status				= 'O' then 1 
+        when Main_Driver_Dec_Status			= 'O' then 1 
+        when Soc_Dom_Pleas_Dec_Status		= 'O' then 1 
+        when Comp_Car_Exper_Status			= 'O' then 1 
+        when DD_Conf_Ltr_Status				= 'O' then 1 
+        when Comp_Fin_Mand_Status			= 'O' then 1 
+        when Val_For_Spec_Item_Status		= 'O' then 1 
+        when Dri_Lic_Num_Status				= 'O' then 1 
+        when Comp_Lost_Cert_Dec_Status		= 'O' then 1 
+        when Orig_Cert_Status				= 'O' then 1 
+        when Cancel_Req_Status				= 'O' then 1 
+        when PPS_Num_Status					= 'O' then 1 
+        when Afford_State_Status			= 'O' then 1 
+        when Identification_Status			= 'O' then 1 
+        when Digital_Journey_Status			= 'O' then 1 
+        when Finance_Form_Status			= 'O' then 1 
+        else 0
+    End = 1 
+and Campaign = 'DAY 20'
+;
+
+
+# In[ ]:
+
+
+-- stg.VanRenewals. Read by step VR1a and any step downstream of it.
+Create or Replace Table stg.VanRenewals as 
+select  PolicyCode, TYPolicyCode, LYPolicyRenewDateAdj, LYEURGrossPremium, LYEURCommission,	LYEURFees, RenEURPremInvite,	RenEURPremAlternative, RenEURFee, PolicyOfferNum, PolicyRetNum, TYReportingSaleType,	TYReportingSaleCategory,	TYReportingSaleDate,
+TYEURGrossPremium,	TYEURCommission,	TYEURFees, Channel, RenewalsPortal,	SuccessfulLoginCount,FailedLoginCount, SuccessfulPaymentCount, FailedPaymentCount, DiaryPaymentTypeTY, PolicyCodeRevisedAtOffer
+from    edw.tbl_fact_policy_renewals
+where   RenewalMonth = '2026-07-31' 
+and     LYPolicyTypeGroup = 'Van' 
+Group by PolicyCode, TYPolicyCode, LYPolicyRenewDateAdj, LYEURGrossPremium, LYEURCommission,	LYEURFees, RenEURPremInvite,	RenEURPremAlternative, RenEURFee, PolicyOfferNum, PolicyRetNum, TYReportingSaleType,	TYReportingSaleCategory,	TYReportingSaleDate,
+TYEURGrossPremium,	TYEURCommission,	TYEURFees, Channel, RenewalsPortal,	SuccessfulLoginCount,FailedLoginCount, SuccessfulPaymentCount, FailedPaymentCount, DiaryPaymentTypeTY, PolicyCodeRevisedAtOffer
+;
+
+
+# In[ ]:
+
+
+-- stg.Van_genesys_inbound_call_duration_summary. Read by step VA0.F1 and any step downstream of it.
+Create or Replace Table stg.Van_genesys_inbound_call_duration_summary as 
+select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
+            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
+            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
+from	stg.A0_genesys_derived_data	a
+where	a.queueName = 'INBOUND_SALES_VAN'  
+Group by ConversationId
+;
+
+
+# In[ ]:
+
+
+-- stg.Van_genesys_derived_data_filtered. Read by step VA0 and any step downstream of it.
+Create or Replace Table stg.Van_genesys_derived_data_filtered as 
+select	a.ConversationId, CustomerPhoneNumber,a.sessionIndex,A.conversationStartTime
+from	stg.A0_genesys_derived_data	a, /* built in Motor acq - but do not use across notebooks or structure the deps */ 
+		(select	ConversationId, max(sessionIndex) sessionIndex
+		from	stg.A0_genesys_derived_data
+		Where	queueName is not null 
+		and		originatingDirection = 'inbound'
+		Group by ConversationId
+		)	b 
+where	a.ConversationId = b.ConversationId
+and		a.sessionIndex = b.sessionIndex
+and		queueName = 'INBOUND_SALES_VAN'
+;
+
+
+# In[ ]:
+
+
+-- stg.VanSales. Read by step VA5 and any step downstream of it.
+Create or Replace Table stg.VanSales as 
+select  PolicyCode, PolicyStatusDesc, Channel, FinanceFlag, RenewalTransferFlag, EURGrossPremium, EURFees, ReportingSaleCategory, ReportingSaleType, ReportingSalesDate
+from    edw.tbl_fact_policy_sales 
+where   EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig) 
+and     PolicyTypeGroup = 'Van' 
+and     ReportingSaleCategory = 'Cat A1: Active Sale'
+and     PolicyCloseNum = 1 
+Group by PolicyCode, PolicyStatusDesc, Channel, FinanceFlag, RenewalTransferFlag, EURGrossPremium, EURFees , ReportingSaleCategory, ReportingSaleType, ReportingSalesDate
+;
+
+
+# In[ ]:
+
+
+-- stg.TravelQuotes. Read by step TA1p and any step downstream of it.
+Create or Replace table stg.TravelQuotes as
+select	quote_number, 'Q' as SourceType , travel_certificatestatus, travel_purchaseDate, case when business_type = 'Renewal' then 1 else 0 end RenewalFlag
+FROM dlk.EXT_Travel_Quotes 
+    WHERE Travel_QuoteDate >= (select startTime from stg.episodeeventstream_buildconfig) and Travel_QuoteDate < (select endTime   from stg.episodeeventstream_buildconfig) 
+	     AND rtrim(ltrim(travel_certificatestatus)) IN ('Completed Quote','Incomplete Quote','Cancelled')   and len(email)>0
+Group by quote_number, travel_certificatestatus, travel_purchaseDate, case when business_type = 'Renewal' then 1 else 0 end 
+union all 
+select p.QuoteId, 'P' , RecordType , p.PurchaseDate, RenewalFlag
+FROM dlk.EXT_Travel_policy p
+	left join dlk.EXT_Travel_Quotes  q on p.QuoteId = q.quote_number 
+WHERE p.PurchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and p.PurchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
+and	  q.quote_number is null 	
+Group by p.QuoteId , RecordType ,p.PurchaseDate, RenewalFlag
+union all 
+select p.QuoteId, 'P' , q.travel_certificatestatus , p.PurchaseDate, RenewalFlag
+FROM dlk.EXT_Travel_policy p
+	join dlk.EXT_Travel_Quotes  q on p.QuoteId = q.quote_number 
+WHERE p.PurchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and p.PurchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
+Group by p.QuoteId ,q.travel_certificatestatus , p.PurchaseDate, RenewalFlag
+;
+
+
+
+# Derived Data - SCV base and call staging, from Gaps II
+
+# In[ ]:
+
+
+-- stg.SCVBase_01. Part of the SCV build, from Gaps II.
+-- SCV Build
+CREATE or Replace table stg.SCVBase_01 as 
+select	SourceSystemReference, SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId 
+from	ods.scv_customer_key 
+where	SourceSystemId = 1
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_02. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_02 as 
+select	QuoteQueryGuid, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId, c.PRN as AdditionalDriverFlag
+from	ods.scv_customer_key				a,
+		dlk.mfq_quotequery					b,
+		dlk.mfq_quotedrivers				c
+where	a.SourceSystemId = 2 
+and		a.SourceSystemReference = c.QuoteDriverId
+and		b.QuoteQueryId = c.QuoteQueryId
+Group by QuoteQueryGuid, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId, c.PRN
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_03. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_03 as 
+select	b.QuoteCodeReference, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId,
+		case when a.SourceSystemReference like '%:JOINT' then 1 else 0 end as JointCustomerFlag 
+from	ods.scv_customer_key				a,
+		dlk.hfq_quotedetails				b
+where	a.SourceSystemId = 3 
+and		replace(a.SourceSystemReference, ':JOINT', '') = b.QuoteCodeReference
+Group by b.QuoteCodeReference, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_04. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_04 as 
+select	c.PolicyCode, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId 
+from	ods.scv_customer_key				a,
+		dlk.ext_home_qs_policyholderdetails	b,
+		dlk.ext_home_qs_policydetails		c
+where	a.SourceSystemId = 4 
+and		a.SourceSystemReference = b.PolicyHolderId
+and		b.PolicyId = c.PolicyId
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_05. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_05 as 
+select	QuoteId, PolicyId, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId
+from	ods.scv_customer_key				a,
+		dlk.ext_travel_policy				b 
+where	a.SourceSystemId = 5 
+and		a.SourceSystemReference = b.MapfreCustomerId
+Group by QuoteId, PolicyId, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_06. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_06 as 
+select	PK_ContactID, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId, case when a.SourceSystemReference like '%:JOINT' then 1 else 0 end as JointCustomerFlag 
+from	ods.scv_customer_key				a,
+		dlk.life_tblcontacts				b 
+where	a.SourceSystemId = 6 
+and		replace(a.SourceSystemReference, ':JOINT', '') = b.PK_ContactID
+Group by PK_ContactID, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId, case when a.SourceSystemReference like '%:JOINT' then 1 else 0 end
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_07. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_07 as 
+select	RowKey, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId 
+from	ods.scv_customer_key				a,
+		dlk.vanquotedetails					b
+where	a.SourceSystemId = 7 
+and		a.SourceSystemReference = b.RowKey
+Group by RowKey, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_08. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_08 as 
+select	quote_number, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId , user_id as email
+from	ods.scv_customer_key				a,
+		dlk.ext_travel_quotes				b
+where	a.SourceSystemId = 8 
+and		a.SourceSystemReference = b.quote_number
+Group by quote_number, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId, user_id
+;
+
+
+# In[ ]:
+
+
+-- stg.SCVBase_09. Part of the SCV build, from Gaps II.
+CREATE or Replace table stg.SCVBase_09 as 
+select	Policy_Code, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId 
+from	ods.scv_customer_key					a,
+		dlk.ext_quotationstorage_policydetails	b
+where	a.SourceSystemId = 9 
+and		replace(a.SourceSystemReference, ':1', '') = b.Quotation_ID
+Group by Policy_Code, a.SourceSystemReference, a.SCV_Customer_Key, a.ChillSourceCustomerKey, a.ChillSourceAddressKey, a.SourceSystemId
+;
+
+
+# In[ ]:
+
+
+-- ods.SCVBase. Part of the SCV build, from Gaps II.
+CREATE or Replace table ods.SCVBase as 
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(SourceSystemReference as varchar(225)) as ClientCode,cast(null as varchar(225)) as PolicyCode, cast(null  as varchar(225)) as QuoteReference, cast(1 as VARCHAR(10)) AdditionalCustomerFlag  
+from stg.SCVBase_01 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(SourceSystemReference as varchar(225)) as ClientCode,cast(null as varchar(225)) as PolicyCode, QuoteQueryGuid as QuoteReference, AdditionalDriverFlag   
+from stg.SCVBase_02 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(SourceSystemReference as varchar(225)) as ClientCode,cast(null as varchar(225)) as PolicyCode, QuoteCodeReference, 1    
+from stg.SCVBase_03 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, null as ClientCode, PolicyCode, SourceSystemReference as QuoteReference, 1    
+from stg.SCVBase_04 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(SourceSystemReference as varchar(225)) as ClientCode, CAST(PolicyId as varchar(225)) as PolicyCode, CAST(QuoteId as varchar(225)) as QuoteReference, CAST(1 AS VARCHAR(10))   
+from stg.SCVBase_05 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(PK_ContactID as varchar(225)) as ClientCode,cast(null as varchar(225)) as PolicyCode, cast(null  as varchar(225)) as QuoteReference, CAST(1 + JointCustomerFlag AS VARCHAR(10))   
+from stg.SCVBase_06 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, cast(SourceSystemReference as varchar(225)) as ClientCode,cast(null as varchar(225)) as PolicyCode, RowKey as QuoteReference, CAST(1 AS VARCHAR(10))  
+from stg.SCVBase_07 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, email as ClientCode,cast(null as varchar(225)) as PolicyCode, cast(quote_number as varchar(225)) as QuoteReference, CAST(1 AS VARCHAR(10)) 
+from stg.SCVBase_08 union
+select SCV_Customer_Key, ChillSourceCustomerKey, ChillSourceAddressKey, SourceSystemId, SourceSystemReference, left(PolicyCode,6) as ClientCode, cast(Policy_Code as varchar(225)), left(SourceSystemReference, 36) as QuoteReference, CAST(1 AS VARCHAR(10))  
+from stg.SCVBase_09
+;
+
+
+# In[ ]:
+
+
+-- stg.RelayCustomers. Part of the SCV build, from Gaps II.
+Create or Replace Table stg.RelayCustomers as 
+select	SCV_Customer_Key, ChillSourceCustomerKey, ClientCode
+from	ods.scvbase			a 
+Where	a.SourceSystemId = 1 
+and		len(a.ClientCode) = 6
+Group by SCV_Customer_Key, ChillSourceCustomerKey, ClientCode
+;
+
+
+# In[ ]:
+
+
+-- ods.ScvEadmLink. Part of the SCV build, from Gaps II.
+Create or Replace Table ods.ScvEadmLink as 
+select	case when b.SCV_Customer_Key < 10000000000000 then coalesce(b.SCV_Customer_Key, a.SCV_Customer_Key) else a.SCV_Customer_Key end as SCV_Customer_Key_Final,
+        a.*
+from	ods.scvbase			a 
+left join 
+        stg.RelayCustomers  b 
+            on  b.ClientCode = left(a.PolicyCode,6)
+            and	a.SourceSystemId in (4,9)
+            and	len(a.PolicyCode) = 9
+;
+
+
+# In[ ]:
+
+
+-- stg.Claims_genesys_derived_data_filtered. Part of inbound claims calls, read by the claim reported steps.
+Create or Replace Table stg.Claims_genesys_derived_data_filtered as 
+select	a.ConversationId, CustomerPhoneNumber,a.sessionIndex,A.conversationStartTime
+from	stg.A0_genesys_derived_data	a
+where	queueName = 'INBOUND_Claims'
+;
+
+
+# In[ ]:
+
+
+-- stg.Van_PhoneNumbers. Part of Van policy phone numbers, read by VCL1a and VD.V1.
+Create or Replace Table stg.Van_PhoneNumbers as 
+select	PolicyCode, ClientCode, CustomerPhone, RapierCustomerId
+FROM	pii.customer_data_assembled a,
+        (
+            select	ClientCode, PolicyCode
+            from	edw.tbl_fact_policy_mvt
+            Where	PolicyTypeGroup = 'Van' 
+            and		EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig) 
+            and		OpenNum = 1 
+            Group by ClientCode, PolicyCode
+        )   b
+Where	SourceSystemCustomerId = ClientCode
+and     SourceSystemId = 1 			
+;
+
+
+# In[ ]:
+
+
+# In[ ]:
+
+
+-- stg.Home_PhoneNumbers. Part of Home policy phone numbers, built like stg.Van_PhoneNumbers and read by HCL1a.
+Create or Replace Table stg.Home_PhoneNumbers as
+select	PolicyCode, ClientCode, CustomerPhone, RapierCustomerId
+FROM	pii.customer_data_assembled a,
+        (
+            select	ClientCode, PolicyCode
+            from	edw.tbl_fact_policy_mvt
+            Where	PolicyTypeGroup = 'Home'
+            and		EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
+            and		OpenNum = 1
+            Group by ClientCode, PolicyCode
+        )   b
+Where	SourceSystemCustomerId = ClientCode
+and     SourceSystemId = 1
+;
+
+
+# In[ ]:
+
+
+-- stg.Motor_PhoneNumbers. Part of Motor policy phone numbers, built like stg.Van_PhoneNumbers and read by CL1a and D.V1.
+Create or Replace Table stg.Motor_PhoneNumbers as
+select	PolicyCode, ClientCode, CustomerPhone, RapierCustomerId
+FROM	pii.customer_data_assembled a,
+        (
+            select	ClientCode, PolicyCode
+            from	edw.tbl_fact_policy_mvt
+            Where	PolicyTypeGroup = 'Motor'
+            and		EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
+            and		OpenNum = 1
+            Group by ClientCode, PolicyCode
+        )   b
+Where	SourceSystemCustomerId = ClientCode
+and     SourceSystemId = 1
+;
+
+
+-- stg.DocRequest_genesys_derived_data_filtered. Part of inbound documents out calls, read by VD.V1.
+Create or Replace Table stg.DocRequest_genesys_derived_data_filtered as 
+select	a.ConversationId, CustomerPhoneNumber,a.sessionIndex,A.conversationStartTime
+from	stg.A0_genesys_derived_data	a
+where	queueName = 'INBOUND_Documents_Out'
+;
+
 
 # Motor Acquisitions
 
@@ -1247,7 +1914,7 @@ SELECT
     'Motor Acquisition - Documents never submitted, policy at risk. Bites A5a customers hardest',
     'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
 and PolicyType = 'Renewals'
 and PolicyTypeGroup = 'Motor'
 and case
@@ -1924,7 +2591,72 @@ Group by a.PolicyCode
 
 
 --RO.F1
+
+-- converted from the count query. The renewal held letter is taken from the Relay feed, with
+-- min(EventDateTime) as the first time the hold went out, and the build config run window added
+-- because the pasted query carried no window of its own.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'RO.F1',
+    'Motor Renewal - Not sent - no terms from Insurer',
+    'Policy'
+from    ods.eventstream     a
+where   a.PolicyTypeGroup = 'Motor'
+and     a.EventSourceId = 3
+and     a.EventDescription like 'Renewal Offer % Held %'
+and     a.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and a.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+Group by a.SourcePolicyReference
+;
+
 --R0.B1
+
+-- converted from the count query. NOTE this is the same query as RO.F1 above, so the two steps will
+-- write one event each for the same policies. Confirm they are meant to be separate before loading both.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'R0.B1',
+    'Motor Renewal - Renewal held letter',
+    'Policy'
+from    ods.eventstream     a
+where   a.PolicyTypeGroup = 'Motor'
+and     a.EventSourceId = 3
+and     a.EventDescription like 'Renewal Offer % Held %'
+and     a.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and a.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+Group by a.SourcePolicyReference
+;
+
 --RO.F2
 -- converted from the count query. ClaimDate is an integer in yyyymmdd form so it is cast to a date for the
 -- timestamp, the derived table was flattened to reach it, and the twelve month claims window is kept as it was.
@@ -2022,6 +2754,39 @@ Group by a.SourcePolicyReference
 
 
 --R1.B2
+
+-- converted from the count query. LYPolicyRenewDateAdj is the only date on the cohort so it supplies the
+-- timestamp, and its July window is a renewal month cohort filter rather than the run window, so it is
+-- kept as the literal the query had.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.LYPolicyRenewDateAdj)),
+    cast(min(a.LYPolicyRenewDateAdj) as date),
+    'R1.B2',
+    'Motor Renewal - Alternative offer sent',
+    'Policy'
+from    edw.tbl_fact_policy_renewals    a
+Where   a.LYPolicyTypeGroup = 'Motor'
+and     a.LYPolicyRenewDateAdj between '2026-07-01' and '2026-07-31'
+and     a.PolicyOfferNum = 1
+and     a.RenEURPremInvite <> a.RenEURPremOffer
+Group by a.PolicyCode
+;
+
 --R1.E1
 -- mirrored from HR1.E1. Straight swap of the renewals table to stg.R0_MotorPoliciesEligibleForRenewals, which only needs PolicyCode, with the campaign filter moved to Motor and the literal window of 2026-06-01 to 2026-09-01 kept exactly as the donor has it.
 
@@ -2048,7 +2813,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults_Policy   a,
         stg.R0_MotorPoliciesEligibleForRenewals b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Motor%'
 and     a.campaign_name like '%Renewals%'
@@ -2093,7 +2858,7 @@ from    (
             where   campaign_name like '%Motor%'
             and     campaign_name like '%TYR%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
             union
@@ -2102,7 +2867,7 @@ from    (
             where   campaign_name like '%Motor%'
             and     campaign_name like '%TYR%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
         ) x
@@ -2220,7 +2985,7 @@ left join
             from    stg.MFQ_Quote_Payments a, stg.RenewalsDoingMFQ  b 
             Where   a.QuotequeryGuId = b.MFQQuotequeryGuId 
             and     PaymentType in (0,5)
-            and     PaymentDate  between '2026-05-01 00:00:00.000' and '2026-08-31 00:00:00.000' 
+            and     PaymentDate  between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1) 
             Group by PolicyCode
         ) b 
         on b.PolicyCode = a.PolicyCode
@@ -2234,6 +2999,38 @@ group by a.PolicyCode
 
 --R2.E1
 
+-- converted from the count query. The distinct TyPolicyCode is the grain so it goes into
+-- SourcePolicyReference, and TyPolicyRenewDateAdj on the eligible for renewals table supplies the
+-- timestamp because it is always populated, unlike the sale date. RenewalMonth is a cohort filter and
+-- stays as the literal it was.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.TyPolicyCode,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.TyPolicyRenewDateAdj)),
+    cast(min(a.TyPolicyRenewDateAdj) as date),
+    'R2.E1',
+    'Motor Renewal - In-flight price improvement: promo code, or the agent reduces the fee',
+    'Policy'
+from    stg.R0_MotorPoliciesEligibleForRenewals     a,
+        edw.tbl_fact_policy_renewals                b
+Where   a.PolicyCode = b.PolicyCode
+and     b.RenewalMonth = '2026-07-31'
+and     b.RenEurFee <> b.TYEURFees
+Group by a.TyPolicyCode
+;
 
 # In[ ]:
 
@@ -2420,13 +3217,7 @@ Group by a.conversationID;
 --R3.O1
 -- mirrored from HR3.O1. Mirrored from the Home donor with stg.R3B1_LapsedThisYearPolicy built first in the same cell, swapping only the renewals table to stg.R0_MotorPoliciesEligibleForRenewals, which carries the PolicyCode and RenewalDate that the build and the insert need.
 
-Create or Replace Table stg.R3B1_LapsedThisYearPolicy as
-select  distinct b.PolicyCode , b.RenewalDate
-from    dlk.rbsdata2_policy_physical a,
-        stg.R0_MotorPoliciesEligibleForRenewals b
-Where   trim(a.pl_code) = trim(b.PolicyCode)  -- trim is important as the source tables have trailing spaces
-and     trim(a.pl_status) = 'L'
-;
+-- stg.R3B1_LapsedThisYearPolicy is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -2628,7 +3419,7 @@ from    stg.R0_MotorPoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3 
 and     d.PolicyTypeGroup = 'Motor'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     EventDescription IN 
     (
         'Renewal Confirmation - Emailed Document - Suitability Statement',
@@ -2672,7 +3463,7 @@ from    stg.R0_MotorPoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3 
 and     d.PolicyTypeGroup = 'Motor'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     EventDescription IN 
     (
         'Renewal Confirmation - Document Transmitted - RNL Cert Issue Letter',
@@ -2980,7 +3771,7 @@ from    (
             where   campaign_name like '%Motor%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
             union
@@ -2989,7 +3780,7 @@ from    (
             where   campaign_name like '%Motor%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
         ) x
@@ -3028,7 +3819,7 @@ from    dlk.EXT_XtremePushResults_Policy a, stg.R0_MotorPoliciesEligibleForRenew
 where   campaign_name like '%Motor%'
 and     campaign_name like '%Lapsed%'
 and     a.PolicyCode = b.PolicyCode
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     interaction_type = 'sent'
 and     MessageType  in ( 'EMAIL', 'SMS')
 and     a.PolicyCode not in
@@ -3038,7 +3829,7 @@ and     a.PolicyCode not in
             where   campaign_name like '%Motor%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type in ('open','click')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -3054,7 +3845,7 @@ from    dlk.EXT_XtremePushResults_Policy a, stg.R0_MotorPoliciesEligibleForRenew
 where   campaign_name like '%Motor%' 
 and     campaign_name like '%Lapsed%' 
 and     a.PolicyCode = b.PolicyCode 
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 and     interaction_type = 'sent' 
 and     MessageType  in ( 'EMAIL', 'SMS')
 and     a.PolicyCode not in 
@@ -3064,7 +3855,7 @@ and     a.PolicyCode not in
             where   campaign_name like '%Motor%' 
             and     campaign_name like '%Lapsed%' 
             and     a.PolicyCode = b.PolicyCode 
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     interaction_type in ('open','click')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -3075,7 +3866,7 @@ and     a.PolicyCode in
             where   campaign_name like '%Motor%' 
             and     campaign_name like '%Lapsed%' 
             and     a.PolicyCode = b.PolicyCode 
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     interaction_type in ('bounce')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -3089,7 +3880,7 @@ from    dlk.EXT_XtremePushResults a, stg.R0_HomePoliciesEligibleForRenewals b
 where   campaign_name like '%Home%' 
 and     campaign_name like '%Lapsed%' 
 and     a.PolicyCode = b.PolicyCode 
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 and     interaction_type = 'sent' 
 and     MessageType  in ( 'EMAIL', 'SMS')
 and     a.PolicyCode not in 
@@ -3099,7 +3890,7 @@ and     a.PolicyCode not in
             where   campaign_name like '%Home%' 
             and     campaign_name like '%Lapsed%' 
             and     a.PolicyCode = b.PolicyCode 
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     interaction_type in ('open','click')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -3110,7 +3901,7 @@ and     a.PolicyCode in
             where   campaign_name like '%Home%' 
             and     campaign_name like '%Lapsed%' 
             and     a.PolicyCode = b.PolicyCode 
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     interaction_type in ('bounce')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -3245,7 +4036,7 @@ and 	PolicyCode IN
 			where   campaign_name like '%Van%' 
 			and     campaign_name like '%Lapsed%' 
 			and     a.PolicyCode = b.PolicyCode 
-			and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+			and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 			and     interaction_type = 'sent' 
 			and     MessageType  in ( 'EMAIL', 'SMS')
 			union
@@ -3254,7 +4045,7 @@ and 	PolicyCode IN
 			where   campaign_name like '%Van%' 
 			and     campaign_name like '%Lapsed%' 
 			and     a.PolicyCode = b.PolicyCode 
-			and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+			and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 			and     interaction_type = 'sent' 
 			and     MessageType  in ( 'EMAIL', 'SMS')
 		)
@@ -3276,7 +4067,7 @@ and 	PolicyCode IN
 			where   campaign_name like '%Van%' 
 			and     campaign_name like '%Lapsed%' 
 			and     a.PolicyCode = b.PolicyCode 
-			and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+			and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 			and     interaction_type = 'sent' 
 			and     MessageType  in ( 'EMAIL', 'SMS')
 			union
@@ -3285,7 +4076,7 @@ and 	PolicyCode IN
 			where   campaign_name like '%Van%' 
 			and     campaign_name like '%Lapsed%' 
 			and     a.PolicyCode = b.PolicyCode 
-			and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+			and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 			and     interaction_type = 'sent' 
 			and     MessageType  in ( 'EMAIL', 'SMS')
 		)
@@ -3360,7 +4151,7 @@ FROM    stg.R0_MotorPoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Motor'
-and     d.EventDateTime between '2026-06-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     d.EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     d.EventDescription like '%Suitability%'
 and     d.EventDescription not like 'Renewal Offer - %'
 AND     (
@@ -3401,7 +4192,7 @@ SELECT
     'Motor Renewal - Chases before the customer submits, and documents never submitted',
     'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
 and PolicyType = 'Renewals'
 and PolicyTypeGroup = 'Motor'
 and case
@@ -3469,7 +4260,7 @@ FROM    stg.R0_MotorPoliciesEligibleForRenewals  a,
         ods.EventStream                          d 
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.PolicyTypeGroup = 'Motor'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     EventDescription in 
         (
                 'New Business - Saved Document - Document Checklist SMS',
@@ -3504,8 +4295,8 @@ SELECT  a.PolicyCode,
         'Policy'
 from    stg.R0_MotorPoliciesEligibleForRenewals a, dlk.MyChill_NewUploadDocumentEvents  b 
 Where   a.TyPolicyCode = b.PolicyCode
-and     `Timestamp` > '2026-05-01 00:00:00.000' 
-and     `Timestamp` < '2026-09-01 00:00:00.000' 
+and     `Timestamp` > add_months((select startTime from stg.episodeeventstream_buildconfig), -1) 
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1) 
 group by a.PolicyCode;
 
 
@@ -3539,7 +4330,7 @@ SELECT
 from    (
         select  PolicyCode , min(CreateDate) FirstDate
         from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
         and PolicyType = 'Renewals'
         and PolicyTypeGroup = 'Motor'
         and case
@@ -3609,8 +4400,8 @@ from    stg.R0_MotorPoliciesEligibleForRenewals     a,
         ods.EventStream                             d 
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3 
-and     EventDateTime > '2026-05-01 00:00:00.000' 
-and     EventDateTime < '2026-09-01 00:00:00.000' 
+and     EventDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1) 
+and     EventDateTime < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1) 
 and     EventDescription like '%Chase%' 
 and     EventDescription like '%Final%'  
 group by a.PolicyCode;
@@ -3643,7 +4434,7 @@ SELECT  a.PolicyCode,
 from    stg.R0_MotorPoliciesEligibleForRenewals a, dlk.MyChillWorkflow_DocumentStatus  b 
 Where   a.TyPolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and     `Timestamp` < '2026-09-01 00:00:00.000'
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     isAccepted = 'true'
 group by a.PolicyCode;
 
@@ -3676,7 +4467,7 @@ from    stg.R0_MotorPoliciesEligibleForRenewals                   a,
         ods.EventStream                          d 
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3 
-and     EventDateTime > '2026-05-01 00:00:00.000' 
+and     EventDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1) 
 and     EventDescription in 
         (
             'Insurer Led Cancelation - Emailed Document - Reg canx email template',
@@ -3688,8 +4479,8 @@ and     a.TyPolicyCode in
                 ods.EventStream                             d 
         Where   a.TyPolicyCode = d.SourcePolicyReference
         and     d.EventSourceId = 3 
-        and     EventDateTime > '2026-05-01 00:00:00.000' 
-        and     EventDateTime < '2026-09-01 00:00:00.000' 
+        and     EventDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1) 
+        and     EventDateTime < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1) 
         and     EventDescription like '%Chase%' 
         and     EventDescription like '%Final%' ) 
 group by a.PolicyCode;
@@ -3722,7 +4513,7 @@ SELECT  a.PolicyCode,
 from    stg.R0_MotorPoliciesEligibleForRenewals a, dlk.MyChillWorkflow_DocumentStatus  b 
 Where   a.TyPolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and     `Timestamp` < '2026-09-01 00:00:00.000'
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     isAccepted = 'true'
 group by a.PolicyCode;
 
@@ -3756,7 +4547,7 @@ SELECT
 from    ods.eventstream a, stg.R0_MotorPoliciesEligibleForRenewals b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     (   EventDescription like '%Emailed Document%'
         or
             EventDescription like '%Document Transmitted%'
@@ -3793,7 +4584,7 @@ SELECT
 from    ods.eventstream a, stg.R0_MotorPoliciesEligibleForRenewals b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     (   EventDescription like '%Emailed Document%'
         or
             EventDescription like '%Document Transmitted%'
@@ -3833,7 +4624,7 @@ from    stg.R0_MotorPoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3 
 and     d.PolicyTypeGroup = 'Motor'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     EventDescription like 'Duplicate Certificate%'
 Group by a.PolicyCode;
 
@@ -3844,16 +4635,7 @@ Group by a.PolicyCode;
 --HA1
 -- converted from the count query. The staging table stg.HA1_HFQ_Quotes is built first in the same cell and the timestamp is the earliest ts_unix on each quote.
 
-Create Or Replace Table stg.HA1_HFQ_Quotes as
-SELECT  *
-FROM    (SELECT  *,
-                CAST(from_unixtime(_ts) AS TIMESTAMP) as ts_unix,
-                ROW_NUMBER() OVER(PARTITION BY QuoteCodeReference, RetrieveCount order by _ts desc) AS RN,
-                COUNT(*)     OVER (PARTITION BY QuoteCodeReference, RetrieveCount) AS MaxRN
-        FROM    dlk.HFQ_QuoteDetails_Snapshot_v2) a
-where   RN = 1
-and     ts_unix >= (select startTime from stg.episodeeventstream_buildconfig) and ts_unix < (select endTime   from stg.episodeeventstream_buildconfig)
-;
+-- stg.HA1_HFQ_Quotes is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -3917,18 +4699,6 @@ and     a.MessageType = 'EMAIL'
 Group by a.email
 ;
 
-# In[ ]:
-
--- ALTERNATIVE VERSION for HA1.E1, from XX - Episode Reconciliation - Gaps.html cell 25
--- The HA1.E1 cell above already had content, so this was not merged into it.
--- Review the two, keep one, then delete this cell.
--- header: HA1.E1
-select  count(distinct email), count(*)
-from	dlk.EXT_XtremePushResults   a 
-where	`timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and		campaign_name like 'Home % TYR %' 
-and     interaction_type = 'sent' 
-and     MessageType in ('SMS', 'EMAIL')
 # In[ ]:
 
 --HA1.E2
@@ -4020,19 +4790,7 @@ Group by a.QuoteCodeReference
 -- exclusion is not applied here and this will read above the Fabric figure of 924 by however many Home callers
 -- had already quoted online. Give me the HFQ phone column and I will add the exclusion.
 
-Create or Replace Table stg.HA0_genesys_derived_data_filtered as
-select	a.ConversationId, a.CustomerPhoneNumber, a.sessionIndex, a.conversationStartTime
-from	stg.A0_genesys_derived_data	a,
-        (select	ConversationId, max(sessionIndex) sessionIndex
-        from	stg.A0_genesys_derived_data
-        Where	queueName is not null
-        and		originatingDirection = 'inbound'
-        Group by ConversationId
-        )	b
-where	a.ConversationId = b.ConversationId
-and		a.sessionIndex = b.sessionIndex
-and		a.queueName = 'INBOUND_SALES_HOME'
-;
+-- stg.HA0_genesys_derived_data_filtered is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -4068,15 +4826,7 @@ Group by a.ConversationId
 -- stg.A0F1_genesys_inbound_call_duration_summary is built, with INBOUND_SALES_HOME. The limit 10 on the
 -- original count was for eyeballing and is dropped.
 
-Create or Replace Table stg.HA0F1_genesys_inbound_call_duration_summary as
-select	a.ConversationId, min(a.conversationStartTime) as conversationStartTime,
-        sum(a.agentAnswered) as agentAnswered, sum(a.alertNoAnswer) alertNoAnswer, sum(a.abandoned) abandoned,
-        sum(a.totalAcdWaitDuration) CallWaitTime, sum(a.totalAgentAlertDuration) CallRingTime,
-        sum(a.totalAgentHoldDuration) CallHoldTime, sum(a.totalAgentTalkDuration) CallSpokenTime
-from	stg.A0_genesys_derived_data	a
-where	a.queueName = 'INBOUND_SALES_HOME'
-Group by a.ConversationId
-;
+-- stg.HA0F1_genesys_inbound_call_duration_summary is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -4359,6 +5109,42 @@ Group by a.PolicyCode
 # In[ ]:
 
 --HA4.F1
+
+-- built by mirroring A4.F1, the Motor twin of this step, rather than from the pasted query, because the
+-- pasted query had two Where clauses so it would not parse. Three differences to check: the Motor twin
+-- tests QuoteQueryGuid is NOT null, which is what starts online then calls to complete means, and it
+-- spells the channel 'b) Web Assist'. Say the word if you want the literal reading of the pasted version.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourceQuoteReference,
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.QuoteQueryGuid,
+    a.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(a.ReportingSaleDate)),
+    cast(min(a.ReportingSaleDate) as date),
+    'HA4.F1',
+    'Home Acquisition - Web assist: starts online, then calls to complete',
+    'Policy'
+from    stg.GlobalPoliciesSold      a
+Where   a.ReportingSaleType = 'New Business'
+and     a.PolicyTypeGroup = 'Home'
+and     a.QuoteQueryGuid is not null
+and     a.Channel = 'b) Web Assist'
+Group by a.QuoteQueryGuid, a.PolicyCode
+;
+
 --HA4b.O1
 
 # In[ ]:
@@ -4529,25 +5315,6 @@ End = 1
 Group by a.PolicyCode
 ;
 
-# In[ ]:
-
--- ALTERNATIVE VERSION for HA6, from XX - Episode Reconciliation - Gaps.html cell 28
--- The HA6 cell above already had content, so this was not merged into it.
--- Review the two, keep one, then delete this cell.
--- header: HA6
-select 
-		count(distinct PolicyCode)  
-		from edw.exp_mychill_chase_daily_snapshot_home a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) and PolicyType = 'New Business' 
-and case 
-        when Gap_In_Cov_Ltr_Status = 'O' then 1 
-        when Val_For_Spec_Item_Status = 'O' then 1 
-        when PPS_Num_Status = 'O' then 1 
-        When Identification_Status = 'O' then 1 
-        when Finance_Form_Status = 'O' then 1 
-        when Digital_Journey_Status = 'O' then 1 
-        else 0
-    End = 1
 # In[ ]:
 
 --HA6.F1
@@ -5330,7 +6097,7 @@ from    dlk.EXT_Home_QS_ClaimDetails    a,
         dlk.ext_home_qs_policydetails   b,
         stg.R0_HomePoliciesEligibleForRenewals c
 Where   a.HomeRiskId = upper(b.RiskId)
-and     b.TransactionDate between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     b.TransactionDate between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     b.PolicyCode = c.PolicyCode
 and     b.EventType = 'Quotation Provided'
 Group by b.PolicyCode
@@ -5376,7 +6143,7 @@ from    dlk.EXT_Home_QS_ClaimDetails    a,
         dlk.ext_home_qs_policydetails   b,
         stg.R0_HomePoliciesEligibleForRenewals c
 Where   a.HomeRiskId = upper(b.RiskId)
-and     b.TransactionDate between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     b.TransactionDate between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     b.PolicyCode = c.PolicyCode
 and     b.EventType = 'Policy Renewal Accepted'
 Group by b.PolicyCode
@@ -5407,7 +6174,7 @@ from    dlk.EXT_Home_QS_ClaimDetails    a,
         dlk.ext_home_qs_policydetails   b,
         stg.R0_HomePoliciesEligibleForRenewals c
 Where   a.HomeRiskId = upper(b.RiskId)
-and     b.TransactionDate between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     b.TransactionDate between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     b.PolicyCode = c.PolicyCode
 and     b.EventType = 'Policy Lapsed'
 Group by b.PolicyCode
@@ -5419,16 +6186,7 @@ Group by b.PolicyCode
 --HR1a
 -- converted from the count query. The staging table is built first and kept as written, including its renewal lookback from 2026-05-01 to 2026-08-01, so no build config run window applies.
 
-Create or Replace Table stg.HR1a_Home_Renewals_EmailOffered as
-select  SourcePolicyReference, min(EventDateTime) OfferedDateTime
-from    ods.EventStream                             a,
-        stg.R0_HomePoliciesEligibleForRenewals     b
-Where   EventDescription like 'Renewal Offer - Emailed Document %'
-and     a.PolicyTypeGroup = 'Home'
-and     a.SourcePolicyReference = b.PolicyCode
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
-Group by SourcePolicyReference
-;
+-- stg.HR1a_Home_Renewals_EmailOffered is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -5460,15 +6218,7 @@ Group by a.SourcePolicyReference
 --HR1b
 -- converted from the count query. The staging table is built first and kept as written, including its renewal lookback from 2026-05-01 to 2026-08-01, so no build config run window applies.
 
-Create or Replace Table stg.HR1b_Home_Renewals_PostOffered as
-select  SourcePolicyReference, min(EventDateTime) OfferedDateTime
-from    ods.EventStream a, stg.R0_HomePoliciesEligibleForRenewals b
-Where   EventDescription like 'Renewal Offer - Document Transmitted %'
-and     a.PolicyTypeGroup = 'Home'
-and     a.SourcePolicyReference = b.PolicyCode
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
-Group by SourcePolicyReference
-;
+-- stg.HR1b_Home_Renewals_PostOffered is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -5564,7 +6314,7 @@ SELECT
     'Call'
 from    dlk.genesys_session_summary a
 Where   a.wrapupCode <> 'ININ-WRAP-UP-TIMEOUT'
-and     a.ConversationStartTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     a.ConversationStartTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     a.QueueName = 'INBOUND_Home_Renewals'
 and     a.OriginatingDirection = 'inbound'
 and     a.wrapupCodeName in
@@ -5581,25 +6331,7 @@ Group by a.ConversationId
 
 --HR2.B1
 
--- Staging tables that the HR2.B1 block needs. These were inlined in the HR2.B1 cell before its
--- insert was removed as a block header, so they are kept here. They build data only and write
--- nothing to the event stream.
-
-Create or Replace Table stg.HomeRenewalScvCustomerKeys as
-select  distinct scv_customer_key , PolicyCode, ClientCode
-from    ods.scv_customer_key  a, (select PolicyCode, left(PolicyCode,6) as ClientCode from stg.R0_HomePoliciesEligibleForRenewals) b
-Where   a.SourceSystemReference = b.ClientCode
-and     a.SourceSystemId = 1
-;
-
-Create or Replace Table stg.HomeRenewalsDoingHFQ as
-select  distinct a.scv_customer_key, a.PolicyCode, b.QuoteCodeReference, ts_unix as QuoteStartDateTime
-from    stg.HomeRenewalScvCustomerKeys a, stg.HFQ_Quotes b, ods.scv_customer_key c
-Where   a.scv_customer_key = c.scv_customer_key
-and     b.QuoteCodeReference = c.SourceSystemReference
-and     ts_unix between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
-and     SourceSystemId = 3
-;
+-- stg.HomeRenewalScvCustomerKeys, stg.HomeRenewalsDoingHFQ are built in the Derived Data section at the top of this notebook.
 
 -- BLOCK HEADER. HR2.B1 is the heading for its sub-steps, not an event in its own right,
 -- so it writes nothing to the event stream. The events come from HR2.B1.1, HR2.B1.2, HR2.B1.3.
@@ -5672,7 +6404,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults_Policy   a,
         stg.R0_HomePoliciesEligibleForRenewals b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Home%'
 and     a.campaign_name like '%Renewals%'
@@ -5711,7 +6443,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults_Policy   a,
         stg.R0_HomePoliciesEligibleForRenewals b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Home%'
 and     a.campaign_name like '%Renewals%'
@@ -5816,7 +6548,7 @@ SELECT
     'Call'
 from    dlk.genesys_session_summary a
 Where   a.wrapupCode <> 'ININ-WRAP-UP-TIMEOUT'
-and     a.ConversationStartTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     a.ConversationStartTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     a.QueueName = 'INBOUND_Home_Renewals'
 and     a.OriginatingDirection = 'inbound'
 and     a.wrapupCodeName in
@@ -5830,36 +6562,13 @@ Group by a.ConversationId
 
 --HR3.B1
 
--- Staging tables that the HR3.B1 block needs. These were inlined in the HR3.B1 cell before its
--- insert was removed as a block header, so they are kept here. They build data only and write
--- nothing to the event stream.
-
-Create or Replace Table stg.HR3B1_LapsedThisYearPolicy as
-select  distinct b.PolicyCode , b.RenewalDate
-from    dlk.rbsdata2_policy_physical a,
-        stg.R0_HomePoliciesEligibleForRenewals b
-Where   trim(a.pl_code) = trim(b.PolicyCode)  -- trim is important as the source tables have trailing spaces
-and     trim(a.pl_status) = 'L'
-;
+-- stg.HR3B1_LapsedThisYearPolicy is built in the Derived Data section at the top of this notebook.
 
 -- BLOCK HEADER. HR3.B1 is the heading for its sub-steps, not an event in its own right,
 -- so it writes nothing to the event stream. The events come from HR3.B1.1, HR3.B1.2.
 -- The insert that used to sit here was removed on 14 September 2026 because it double
 -- counted one of those sub-steps. It is kept in Removed_block_header_inserts.py.
 
-# In[ ]:
-
--- ALTERNATIVE VERSION for HR3.B1, from XX - Episode Reconciliation - Gaps.html cell 17
--- The HR3.B1 cell above already had content, so this was not merged into it.
--- Review the two, keep one, then delete this cell.
--- header: Home	Renewal	HR3.B1
-select	count(distinct a.PolicyCode)
-from	dlk.EXT_XtremePushResults    a, stg.R0_HomePoliciesEligibleForRenewals b 
-where	`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000' 
-and     a.PolicyCode = b.PolicyCode 
-and		campaign_name like 'Home - This Year Lapsed%' 
-and     MessageType in ( 'EMAIL', 'SMS')
-and     interaction_type = 'sent'
 # In[ ]:
 
 --HR3.O1
@@ -5943,7 +6652,7 @@ Group by a.TyPolicyCode
 -- header: -- these voluems are messed up for some reason -- so redone below on the 08th - recalculated below for both cells
 select  count(distinct a.PolicyCode) 
 from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a, stg.R0_HomePoliciesEligibleForRenewals b 
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31' 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31' 
 and     PolicyType = 'Renewals' 
 and     PolicyTypeGroup = 'Home' 
 and     a.PolicyCode = b.PolicyCode 
@@ -5988,7 +6697,7 @@ SELECT
     'Home Renewal - Chases before the customer submits, and documents never submitted',
     'Policy'
 from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
 and PolicyType = 'Renewals'
 and PolicyTypeGroup = 'Home'
 and case
@@ -6009,18 +6718,7 @@ Group by a.PolicyCode
 --HR4a
 -- converted from the count query. The staging table is built first because HR4c reads it, no pay in full filter is added because the original query applies none, and the T-60 to T+40 renewal lookback is kept exactly as it is so no build config run window applies.
 
-Create or Replace Table stg.HR4_HomeRenewalsOnlinePayments as
-select  ClientCode, PolicyCode, max(`Timestamp`) PaymentDateTime
-from    (
-            select  left(PolicyCode,6) as ClientCode, dateadd(day, -60, RenewalDate) RenewalStartDate, PolicyCode, dateadd(day, 40, RenewalDate) RenewalEndDate
-            from stg.R0_HomePoliciesEligibleForRenewals
-        )   a,
-        dlk.AppliedRenewals_PaymentSuccess b
-Where   a.ClientCode = b.PortfolioCode
-and     b.`Timestamp` > a.RenewalStartDate
-and     b.`Timestamp` < a.RenewalEndDate
-Group by ClientCode, PolicyCode
-;
+-- stg.HR4_HomeRenewalsOnlinePayments is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -6116,7 +6814,7 @@ from    stg.R0_HomePoliciesEligibleForRenewals   a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     EventDescription IN
     (
         'Renewal Confirmation - Emailed Document - Suitability Statement',
@@ -6160,7 +6858,7 @@ from    stg.R0_HomePoliciesEligibleForRenewals   a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     EventDescription IN
     (
         'Renewal Confirmation - Document Transmitted - RNL Cert Issue Letter',
@@ -6207,7 +6905,7 @@ FROM    stg.R0_HomePoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     d.EventDateTime between '2026-06-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     d.EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     d.EventDescription like '%Suitability%'
 and     d.EventDescription not like 'Renewal Offer - %'
 AND     (
@@ -6231,13 +6929,7 @@ Group by a.PolicyCode
 --HR2.B1.1
 -- converted from the count query. The staging table is built first because later steps read it, the source is HFQ so SourceSystemId is 2, and the lookback from 2026-05-01 is kept exactly as it is so no build config run window applies.
 
-Create or Replace Table stg.HR2B1_1_Base as
-SELECT  distinct b.PolicyCode, b.QuoteCodeReference, b.QuoteStartDatetime , RenEURPremOffer, TYEURGrossPremium, PolicyRetNum
-FROM    stg.HomeRenewalsDoingHFQ                b,
-        stg.R0_HomePoliciesEligibleForRenewals  c
-Where   b.PolicyCode = c.PolicyCode
-and     b.QuoteStartDateTime > '2026-05-01 00:00:00.000'
-;
+-- stg.HR2B1_1_Base is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -6303,6 +6995,42 @@ Group by a.PolicyCode
 # In[ ]: 
 
 --HR2.B1.2.F1
+
+-- from Gaps II. The anti-join against the priced HFQ responses, so it is the mirror of HR2.B1.2.
+-- QuoteStartDateTime supplies the timestamp and the grain is the policy, matching HR2.B1.1 and
+-- HR2.B1.2. SourceSystemId is 2 because the quote is HFQ.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(a.QuoteStartDateTime)),
+    cast(min(a.QuoteStartDateTime) as date),
+    'HR2.B1.2.F1',
+    'Home Renewal - No price returned, or the quote is abandoned',
+    'Policy'
+from    stg.HomeRenewalsDoingHFQ    a
+left join
+        (select QuoteCodeReference
+        from    dlk.HFQ_Response_Quotes
+        where   Quotes_Premium <> 0
+        and     Quotes_Outcome = 'PremiumReturned'
+        Group by QuoteCodeReference) b
+        on a.QuoteCodeReference = b.QuoteCodeReference
+Where   b.QuoteCodeReference is null
+Group by a.PolicyCode
+;
 
 # In[ ]: 
 
@@ -6501,7 +7229,7 @@ from    (
             where   campaign_name like '%Home%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
             union
@@ -6510,7 +7238,7 @@ from    (
             where   campaign_name like '%Home%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type = 'sent'
             and     MessageType  in ( 'EMAIL', 'SMS')
         ) x
@@ -6547,7 +7275,7 @@ from    dlk.EXT_XtremePushResults_Policy a, stg.R0_HomePoliciesEligibleForRenewa
 where   campaign_name like '%Home%'
 and     campaign_name like '%Lapsed%'
 and     a.PolicyCode = b.PolicyCode
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     interaction_type = 'sent'
 and     MessageType  in ( 'EMAIL', 'SMS')
 and     a.PolicyCode not in
@@ -6557,7 +7285,7 @@ and     a.PolicyCode not in
             where   campaign_name like '%Home%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type in ('open','click')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -6568,7 +7296,7 @@ and     a.PolicyCode in
             where   campaign_name like '%Home%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type in ('bounce')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -6606,7 +7334,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a,
         stg.R0_HomePoliciesEligibleForRenewals b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Home%'
 and     a.campaign_name like '%Lapsed%'
@@ -6646,7 +7374,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a,
         stg.R0_HomePoliciesEligibleForRenewals b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Home%'
 and     a.campaign_name like '%Lapsed%'
@@ -6686,7 +7414,7 @@ FROM    stg.R0_HomePoliciesEligibleForRenewals  a,
         ods.EventStream                          d
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.PolicyTypeGroup = 'Home'
-and     d.EventDateTime between '2026-06-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     d.EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     d.EventDescription in
         (
             'New Business - Saved Document - Document Checklist SMS',
@@ -6724,14 +7452,60 @@ SELECT
 from    stg.R0_HomePoliciesEligibleForRenewals a,
         dlk.MyChill_NewUploadDocumentEvents  b
 Where   a.TyPolicyCode = b.PolicyCode
-and     b.`Timestamp` > '2026-05-01 00:00:00.000'
-and     b.`Timestamp` < '2026-09-01 00:00:00.000'
+and     b.`Timestamp` > add_months((select startTime from stg.episodeeventstream_buildconfig), -1)
+and     b.`Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 Group by b.PolicyCode
 ;
 
 # In[ ]: 
 
 --HR4.B2.4
+
+-- from Gaps II. Built like the Motor twin R4.B2.4, with min(CreateDate) pulled out of a derived table
+-- so the chase has a timestamp. The 2026-05-01 to 2026-07-31 window is a renewals lookback rather than
+-- the run window, so it is kept as the literal the query had.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    x.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(x.FirstDate)),
+    cast(min(x.FirstDate) as date),
+    'HR4.B2.4',
+    'Home Renewal - Chase, first reminder',
+    'Policy'
+from    (
+        select  PolicyCode , min(CreateDate) FirstDate
+        from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a
+        Where   coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
+        and     PolicyTypeGroup = 'Home'
+        and case
+                When Comp_DDM_Status                = 'O' then 1
+                When Gap_In_Cov_Ltr_Status          = 'O' then 1
+                When Val_For_Spec_Item_Status       = 'O' then 1
+                When PPS_Num_Status                 = 'O' then 1
+                When Identification_Status          = 'O' then 1
+                When Digital_Journey_Status         = 'O' then 1
+                When Finance_Form_Status            = 'O' then 1
+                else 0
+            End = 1
+        and     Campaign = 'DAY 1'
+        and     PolicyType = 'Renewals'
+        Group by PolicyCode
+        ) x
+Group by x.PolicyCode
+;
 
 # In[ ]: 
 
@@ -6763,8 +7537,8 @@ FROM    stg.R0_HomePoliciesEligibleForRenewals     a,
         ods.EventStream                             d
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
-and     d.EventDateTime > '2026-06-01 00:00:00.000'
-and     d.EventDateTime < '2026-09-01 00:00:00.000'
+and     d.EventDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1)
+and     d.EventDateTime < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     d.EventDescription like '%Chase%'
 and     d.EventDescription like '%Final%'
 Group by a.PolicyCode
@@ -6798,7 +7572,7 @@ SELECT  a.PolicyCode,
 from    stg.R0_HomePoliciesEligibleForRenewals a, dlk.MyChillWorkflow_DocumentStatus  b
 Where   a.TyPolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
-and     `Timestamp` < '2026-09-01 00:00:00.000'
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     isAccepted = 'true'
 Group by a.PolicyCode
 ;
@@ -6834,7 +7608,7 @@ FROM    stg.R0_HomePoliciesEligibleForRenewals  a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     d.EventDateTime between '2026-06-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     d.EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     d.EventDescription not like 'Renewal Offer - %'
 and     d.EventDescription like '%Insurer Led Cancelation % Reg canx email template%'
 AND     (
@@ -6873,7 +7647,7 @@ SELECT  a.PolicyCode,
 from    stg.R0_HomePoliciesEligibleForRenewals a, dlk.MyChillWorkflow_DocumentStatus  b
 Where   a.TyPolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
-and     `Timestamp` < '2026-09-01 00:00:00.000'
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     isAccepted = 'true'
 Group by a.PolicyCode
 ;
@@ -6907,7 +7681,7 @@ SELECT
 from    ods.eventstream a, stg.R0_HomePoliciesEligibleForRenewals b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     (   EventDescription like '%Emailed Document%'
         or
             EventDescription like '%Document Transmitted%'
@@ -6944,7 +7718,7 @@ SELECT
 from    ods.eventstream a, stg.R0_HomePoliciesEligibleForRenewals b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     (   EventDescription like '%Emailed Document%'
         or
             EventDescription like '%Document Transmitted%'
@@ -6981,7 +7755,7 @@ from    stg.R0_HomePoliciesEligibleForRenewals   a,
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
 and     d.PolicyTypeGroup = 'Home'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
 and     EventDescription like 'Duplicate Certificate%'
 Group by a.PolicyCode
 ;
@@ -7017,21 +7791,11 @@ Where   QueueName in ('INBOUND_HomeChangeOther',
 'INBOUND_HomeChangeBuildCost')
 and     originatingDirection = 'inbound' 
 and     b.CustomerPhone is null
+Group by a.ConversationId
 
 --HM1.F1
 
-Create or Replace Table stg.AbandonedHomeMTACalls as 
-select distinct ConversationId
-from 
-(select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
-            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
-            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
-from	stg.A0_genesys_derived_data	a
-where	a.queueName in ('INBOUND_HomeChangeOther',
-'INBOUND_HomeChangeBuildCost')
-and abandoned = 1 and CallWaitTime > 0 
-Group by ConversationId) x 
-
+-- stg.AbandonedHomeMTACalls is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -7058,7 +7822,7 @@ Where   a.ConversationId = b.ConversationId
 Group by a.ConversationId
 --HM2
 
-
+-- NOTHING TO BUILD: no data for this step, marked in Gaps II as ignore.
 
 --HM2.O1
 -- and     PremiumType = 'Mid Term Adjustment'
@@ -7161,7 +7925,7 @@ SELECT
     'Home MTA - Chases before the customer submits, and documents never submitted',
     'Policy'
 from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
 and     PolicyTypeGroup = 'Home'
 and case
         When Comp_DDM_Status				= 'O' then 1
@@ -7241,7 +8005,13 @@ and     (
 
 # In[ ]:
 --HM4.F1
+
+-- NOTHING TO BUILD: no data for this step, marked in Gaps II.
+
 --HM4a
+
+-- NOTHING TO BUILD: not available, the query is commented out in Gaps II.
+
 --HM4c
 -- converted from the count query. The premium and fee sums were dropped because the event stream holds no amount, and the timestamp comes from ReportingSaleDate on stg.JulyPolicyState.
 
@@ -7278,6 +8048,9 @@ Group by b.PolicyCode
 ;
 
 --HM5
+
+-- NOTHING TO BUILD: no data for this step, marked in Gaps II.
+
 --HM6
 -- converted from the count query. Reads ods.EventStream and writes to ods.EpisodeEventStream, with max EventDateTime for the last document reissue.
 
@@ -7597,6 +8370,44 @@ Group by a.PolicyCode
 ;
 
 --HM4.B1.6
+
+-- from Gaps II. Same shape as HM4.B1.3 with the isAccepted test added, which is how A6.B1.6 marks
+-- documents received and validated. The Group by isAccepted in the count was an eyeballing breakdown
+-- and is dropped. The July window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', max(b.`Timestamp`)),
+    cast(max(b.`Timestamp`) as date),
+    'HM4.B1.6',
+    'Home MTA - Documents received and validated',
+    'Policy'
+from    (
+                select  b.PolicyCode
+                from    stg.JJulyMTAs a, stg.JulyPolicyState b
+                Where   a.PolicyCode = b.PolicyCode
+                and     PolicyTypeGroup = 'Home'
+                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
+            )  a, dlk.MyChillWorkflow_DocumentStatus  b
+Where   a.PolicyCode = b.PolicyCode
+and     b.`Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and b.`Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
+and     b.isAccepted = 'true'
+Group by b.PolicyCode
+;
+
 --HM6.B1.1
 -- converted from the count query. The stray comment terminator at the head of the cell was removed and the document description list was kept exactly as written.
 
@@ -7649,6 +8460,55 @@ Group by a.PolicyCode
 ;
 
 --HM6.B1.2
+
+-- from Gaps II. The redundant Emailed Document or Document Transmitted test was dropped because the
+-- six description IN list already covers it. min(d.EventDateTime) is when the pack went out, and the
+-- July window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(d.EventDateTime)),
+    cast(min(d.EventDateTime) as date),
+    'HM6.B1.2',
+    'Home MTA - Document pack dispatched',
+    'Policy'
+FROM    (
+            select  b.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Home'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
+        )                                       a,
+        ods.EventStream                          d
+Where   a.PolicyCode = d.SourcePolicyReference
+and     d.EventSourceId = 3
+and     d.PolicyTypeGroup = 'Home'
+and     d.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and d.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     d.EventDescription in
+        (
+            'New Business - Emailed Document - Terms Of Business',
+            'New Business - Emailed Document - Cover Letter',
+            'New Business - Emailed Document - 04 - Suitability Statement',
+            'New Business - Document Transmitted - 04 - Suitability Statement',
+            'New Business - Document Transmitted - Terms Of Business',
+            'New Business - Document Transmitted - Cover Letter'
+        )
+Group by a.PolicyCode
+;
+
 --HM6.B1.3
 --HC1a
 -- converted from the count query. The staging table build is kept because later HC steps read it. The
@@ -7656,24 +8516,7 @@ Group by a.PolicyCode
 -- stg.JulyPolicyState is used. That is when the cancellation took effect, not when the customer asked.
 -- The ShortDescription filter is the one the original breakdown query used to isolate customer requests.
 
-Create or Replace Table stg.JulyHomeCancellations as
-select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
-from    edw.tbl_fact_policy_mtc
-Where   PolicyTypeGroup = 'Home'
-and     EffectiveDate = '2026-07-31'
-;
-Create or Replace Table stg.JulyMotorCancellations as
-select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
-from    edw.tbl_fact_policy_mtc
-Where   PolicyTypeGroup = 'Motor'
-and     EffectiveDate = '2026-07-31'
-;
-Create or Replace Table stg.JulyVanCancellations as
-select  distinct PolicyStatusDesc,  ShortDescription, PolicyCode, ClientCode
-from    edw.tbl_fact_policy_mtc
-Where   PolicyTypeGroup = 'Van'
-and     EffectiveDate = '2026-07-31'
-;
+-- stg.JulyHomeCancellations, stg.JulyMotorCancellations, stg.JulyVanCancellations are built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -7700,7 +8543,7 @@ from    edw.tbl_fact_policy_mtc a,
         stg.JulyPolicyState     b
 Where   a.PolicyCode = b.PolicyCode
 and     a.PolicyTypeGroup = 'Home'
-and     a.EffectiveDate = '2026-07-31'
+and     a.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 and     (
             a.ShortDescription like 'Client%'
         or
@@ -7740,7 +8583,7 @@ from    edw.tbl_fact_policy_mtc a,
         stg.JulyPolicyState     b
 Where   a.PolicyCode = b.PolicyCode
 and     a.PolicyTypeGroup = 'Home'
-and     a.EffectiveDate = '2026-07-31'
+and     a.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 and     a.ShortDescription like '%NCT%'
 Group by a.PolicyCode
 ;
@@ -7905,6 +8748,38 @@ Group by a.SourcePolicyReference
 ;
 
 --HC6
+
+-- mirrored from VC6, which Gaps II gave us. Straight product swap of the ods.eventstream filter to
+-- Home, keeping the Relay description and the build config run window exactly as the donor has them.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'HC6',
+    'Home Cancellation - Cancellation confirmation sent',
+    'Policy'
+from    ods.eventstream     a
+Where   a.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and a.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.EventSourceId = 3
+and     a.PolicyTypeGroup = 'Home'
+and     a.EventDescription = 'Insurer Led Cancelation - Emailed Document - Reg canx email template'
+Group by a.SourcePolicyReference
+;
+
 --HARR.1
 
 insert INTO
@@ -8038,11 +8913,189 @@ and     PolicyTypeGroup = 'Home'
 group by PolicyCode
 
 --HARR.O2
+
+-- converted from the count query. The Insurer Led subquery now projects EventDateTime as well as the
+-- reference so the insert has a timestamp, and min is used because the escalation is the first forced
+-- cancellation event. Both July windows are the run window so they take the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'HARR.O2',
+    'Home Arrears - Escalation to forced cancellation',
+    'Policy'
+from            (select  distinct SourcePolicyReference, EventDateTime
+                from    ods.eventstream        a
+                Where   EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+                and     EventSourceId = 3
+                and     PolicyTypeGroup = 'Home'
+                and     EventDescription like 'Insurer Led%') a,
+                (select  distinct b.PolicyCode
+                from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b
+                where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
+                and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig)
+                --and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
+                and     MessageType in ('SMS', 'EMAIL')
+                and     PolicyTypeGroup = 'Home') b
+Where   a.SourcePolicyReference = b.PolicyCode
+Group by a.SourcePolicyReference
+;
+
 --HCL1a
+
+-- REBUILT on the back of VCL1a from Gaps II. The earlier version read stg.DocRequestClientCodes, the
+-- Doc Request staging table, which was the wrong population. This one goes through the INBOUND_Claims
+-- queue and stg.Home_PhoneNumbers, built here the same way stg.Van_PhoneNumbers is. SourceSystemId is 2
+-- because the call comes from Genesys.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    2,
+    'Home',
+    date_trunc('MINUTE', min(b.conversationStartTime)),
+    cast(min(b.conversationStartTime) as date),
+    'HCL1a',
+    'Home Claims - Home claim reported',
+    'Policy'
+from    stg.Home_PhoneNumbers                       a,
+        stg.Claims_genesys_derived_data_filtered    b
+Where   b.CustomerPhoneNumber = a.CustomerPhone
+Group by a.PolicyCode
+;
+
 --HCL1b
+
+-- converted from the count query. TransactionDate and the claim type sit on the policy details and
+-- claim details tables the way HR0.F1 reads them, so min(b.TransactionDate) supplies the timestamp, and
+-- the July window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(b.TransactionDate)),
+    cast(min(b.TransactionDate) as date),
+    'HCL1b',
+    'Home Claims - Escape of water or emergency assistance',
+    'Policy'
+from    dlk.EXT_Home_QS_ClaimDetails    a,
+        dlk.ext_home_qs_policydetails   b
+Where   a.HomeRiskId = upper(b.RiskId)
+and     b.TransactionDate >= (select startTime from stg.episodeeventstream_buildconfig) and b.TransactionDate < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.HomeClaimType = 'Escape Of Water'
+Group by b.PolicyCode
+;
+
 --HCL1c
+
+-- converted from the count query. TransactionDate and the claim type sit on the policy details and
+-- claim details tables the way HR0.F1 reads them, so min(b.TransactionDate) supplies the timestamp, and
+-- the July window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(b.TransactionDate)),
+    cast(min(b.TransactionDate) as date),
+    'HCL1c',
+    'Home Claims - Storm, flood or weather claim',
+    'Policy'
+from    dlk.EXT_Home_QS_ClaimDetails    a,
+        dlk.ext_home_qs_policydetails   b
+Where   a.HomeRiskId = upper(b.RiskId)
+and     b.TransactionDate >= (select startTime from stg.episodeeventstream_buildconfig) and b.TransactionDate < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.HomeClaimType = 'Storm Damage'
+Group by b.PolicyCode
+;
+
 --HCL4
+
+--not available for home
+-- NOT CONVERTED, and nothing to convert: no source for this step on Home.
+
 --HCL.O2
+
+-- converted from the count query. min(b.TransactionDate) supplies the timestamp, matching how HR0.F1
+-- reads this pair of tables, and the 2026-05-01 start is a lookback rather than the run window so it is
+-- kept as the literal the query had.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Home',
+    date_trunc('MINUTE', min(b.TransactionDate)),
+    cast(min(b.TransactionDate) as date),
+    'HCL.O2',
+    'Home Claims - Policy ended',
+    'Policy'
+from    dlk.EXT_Home_QS_ClaimDetails            a,
+        dlk.ext_home_qs_policydetails           b,
+        stg.R0_HomePoliciesEligibleForRenewals  c
+Where   a.HomeRiskId = upper(b.RiskId)
+and     b.TransactionDate between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000'
+and     b.PolicyCode = c.PolicyCode
+and     b.EventType = 'Policy Cancelled'
+Group by b.PolicyCode
+;
 
 # In[ ]:
 
@@ -8294,25 +9347,11 @@ Where   QueueName in ('INBOUND_VehicleChangeAddress',
 'INBOUND_Vehicle_Add_Driver')
 and     originatingDirection = 'inbound' 
 and     b.CustomerPhone is null
+Group by a.ConversationId
 
 --M1.F1
 
-Create or Replace Table stg.AbandonedMTACalls as 
-select distinct ConversationId
-from 
-(select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
-            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
-            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
-from	stg.A0_genesys_derived_data	a
-where	a.queueName in ('INBOUND_VehicleChangeAddress',
-'INBOUND_VehicleChangeOther',
-'INBOUND_VehicleChange_Perm',
-'INBOUND_VehicleChange_Temp',
-'INBOUND_VehicleUpdateLicence',
-'INBOUND_Vehicle_Add_Driver')
-and abandoned = 1 and CallWaitTime > 0 
-Group by ConversationId) x 
-
+-- stg.AbandonedMTACalls is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -8737,6 +9776,43 @@ and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig
 Group by b.SourcePolicyReference;
 
 --M3.B1.6
+
+-- mirrored from HM4.B1.6. The MTA base swapped to Motor, with isAccepted true marking the
+-- documents that were received AND validated, which is how A6.B1.6 and HM4.B1.6 read this step.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Motor',
+    date_trunc('MINUTE', max(b.`Timestamp`)),
+    cast(max(b.`Timestamp`) as date),
+    'M3.B1.6',
+    'Motor MTA - Documents received and validated',
+    'Policy'
+from    (
+                select  b.PolicyCode
+                from    stg.JJulyMTAs a, stg.JulyPolicyState b
+                Where   a.PolicyCode = b.PolicyCode
+                and     PolicyTypeGroup = 'Motor'
+                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
+            )  a, dlk.MyChillWorkflow_DocumentStatus  b
+Where   a.PolicyCode = b.PolicyCode
+and     b.`Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and b.`Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
+and     b.isAccepted = 'true'
+Group by b.PolicyCode
+;
+
 --C1a
 
 insert INTO
@@ -8764,7 +9840,7 @@ from    edw.tbl_fact_policy_mtc a,
         stg.JulyPolicyState     b
 Where   a.PolicyCode = b.PolicyCode
 and     a.PolicyTypeGroup = 'Motor'
-and     a.EffectiveDate = '2026-07-31'
+and     a.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 and     (
             a.ShortDescription like 'Client%'
         or
@@ -8804,7 +9880,7 @@ from    edw.tbl_fact_policy_mtc a,
         stg.JulyPolicyState     b
 Where   a.PolicyCode = b.PolicyCode
 and     a.PolicyTypeGroup = 'Motor'
-and     a.EffectiveDate = '2026-07-31'
+and     a.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 and     a.ShortDescription like '%NCT%'
 Group by a.PolicyCode
 ;
@@ -8892,50 +9968,7 @@ Group by a.PolicyCode
 
 --C4
 
-Create or replace table stg.MotorEscalated20days as 
-select  
-		distinct PolicyCode 
-from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') >= (select startTime from stg.episodeeventstream_buildconfig) and coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') < (select endTime   from stg.episodeeventstream_buildconfig) 
-and PolicyType = 'New Business' 
-and PolicyTypeGroup = 'Motor' 
-and case 
-        when Sign_Prop_Status				= 'O' then 1 
-        when Sign_Stat_Of_Fact_Status		= 'O' then 1 
-        when Comp_Fin_Agree_Status			= 'O' then 1 
-        when Comp_DDM_Status				= 'O' then 1 
-        when Proof_Of_NCB_Status			= 'O' then 1 
-        when Trans_Proof_Of_NCB_Status		= 'O' then 1 
-        when Ltr_Of_Driv_Exp_Status			= 'O' then 1 
-        when Prop_Driv_Lic_Status			= 'O' then 1 
-        when Nam_Driv_Lic_Status			= 'O' then 1 
-        when Gap_In_Cov_Ltr_Status			= 'O' then 1 
-        when `2ndCar_Cert_Status`			= 'O' then 1 
-        when Doc_Ltr_Status					= 'O' then 1 
-        when Engineers_Rpt_Status			= 'O' then 1 
-        when NCT_Status						= 'O' then 1 
-        when Veh_Lic_Cert_Status			= 'O' then 1 
-        when Irish_Reg_Status				= 'O' then 1 
-        when Main_Driver_Dec_Status			= 'O' then 1 
-        when Soc_Dom_Pleas_Dec_Status		= 'O' then 1 
-        when Comp_Car_Exper_Status			= 'O' then 1 
-        when DD_Conf_Ltr_Status				= 'O' then 1 
-        when Comp_Fin_Mand_Status			= 'O' then 1 
-        when Val_For_Spec_Item_Status		= 'O' then 1 
-        when Dri_Lic_Num_Status				= 'O' then 1 
-        when Comp_Lost_Cert_Dec_Status		= 'O' then 1 
-        when Orig_Cert_Status				= 'O' then 1 
-        when Cancel_Req_Status				= 'O' then 1 
-        when PPS_Num_Status					= 'O' then 1 
-        when Afford_State_Status			= 'O' then 1 
-        when Identification_Status			= 'O' then 1 
-        when Digital_Journey_Status			= 'O' then 1 
-        when Finance_Form_Status			= 'O' then 1 
-        else 0
-    End = 1 
-and Campaign = 'DAY 20'
-Group by b.SourcePolicyReference
-
+-- stg.MotorEscalated20days is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -8949,24 +9982,24 @@ ods.EpisodeEventStream
     Grain
 )
 SELECT
-        a.SourcePolicyReference,
+        x.SourcePolicyReference,
         1,
         'Motor',
-        max(date_trunc('MINUTE', EventDate)),
-        max(EventDate as date),
+        max(date_trunc('MINUTE', x.EventDate)),
+        cast(max(x.EventDate) as date),
         'C4',
         'Motor Cancellation - Final notice',
         'Policy'
 from 
-    (select	distinct SourcePolicyReference from ods.eventstream 
+    (select	distinct SourcePolicyReference, EventDate from ods.eventstream 
     where	EventSourceId = 3 
     and		EventDate >= (select startTime from stg.episodeeventstream_buildconfig) and EventDate < (select endTime   from stg.episodeeventstream_buildconfig) 
     and		PolicyTypeGroup = 'Motor'
     and		upper(EventDescription) like '%CHASE%' 
     and		upper(EventDescription) like '%FINAL%' ) x ,
     stg.MotorEscalated20days y 
-Where     SourcePolicyReference = PolicyCode
-Group by a.SourcePolicyReference
+Where     x.SourcePolicyReference = y.PolicyCode
+Group by x.SourcePolicyReference
 
 --C5
 
@@ -9006,6 +10039,38 @@ Group by a.SourcePolicyReference
 ;
 
 --C6
+
+-- REBUILT on the back of VC6 from Gaps II. The earlier version read stg.JulyMotorCancellations and had
+-- to be stamped at the literal EffectiveDate because that table carries no date. This one takes the
+-- confirmation straight off the Relay feed, so it has a real event time and follows the run window.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'C6',
+    'Motor Cancellation - Cancellation confirmation sent',
+    'Policy'
+from    ods.eventstream     a
+Where   a.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and a.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.EventSourceId = 3
+and     a.PolicyTypeGroup = 'Motor'
+and     a.EventDescription = 'Insurer Led Cancelation - Emailed Document - Reg canx email template'
+Group by a.SourcePolicyReference
+;
 
 --ARR.1
 
@@ -9140,7 +10205,81 @@ and     PolicyTypeGroup = 'Motor'
 group by PolicyCode
 
 --ARR.O2
+
+-- converted from the count query. The Insurer Led subquery now projects EventDateTime as well as the
+-- reference so the insert has a timestamp, and min is used because the escalation is the first forced
+-- cancellation event. Both July windows are the run window so they take the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'ARR.O2',
+    'Motor Arrears - Escalation to forced cancellation',
+    'Policy'
+from            (select  distinct SourcePolicyReference, EventDateTime
+                from    ods.eventstream        a
+                Where   EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+                and     EventSourceId = 3
+                and     PolicyTypeGroup = 'Motor'
+                and     EventDescription like 'Insurer Led%') a,
+                (select  distinct b.PolicyCode
+                from    dlk.EXT_XtremePushResults  a, tmp.CurrentPolicy b
+                where   upper(campaign_name) like '%RREARS%' and a.ClientCode = left(b.PolicyCode,6)
+                and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig)
+                --and     campaign_name = 'Arrears - Chase 5 - 28 Days Past'
+                and     MessageType in ('SMS', 'EMAIL')
+                and     PolicyTypeGroup = 'Motor') b
+Where   a.SourcePolicyReference = b.PolicyCode
+Group by a.SourcePolicyReference
+;
+
 --CL1a
+
+-- REBUILT on the back of VCL1a from Gaps II. The earlier version read stg.DocRequestClientCodes, the
+-- Doc Request staging table, which was the wrong population. This one goes through the INBOUND_Claims
+-- queue and stg.Motor_PhoneNumbers, built here the same way stg.Van_PhoneNumbers is. SourceSystemId is 2
+-- because the call comes from Genesys.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    2,
+    'Motor',
+    date_trunc('MINUTE', min(b.conversationStartTime)),
+    cast(min(b.conversationStartTime) as date),
+    'CL1a',
+    'Motor Claims - Motor claim reported',
+    'Policy'
+from    stg.Motor_PhoneNumbers                      a,
+        stg.Claims_genesys_derived_data_filtered    b
+Where   b.CustomerPhoneNumber = a.CustomerPhone
+Group by a.PolicyCode
+;
+
 --D1
 -- converted from the count query, split by PolicyTypeGroup per your instruction, so HD1, D1 and VD1 each
 -- carry their own product. The Group by EventDescription and Order by were an eyeballing breakdown and are
@@ -9354,17 +10493,44 @@ Group by x.SourcePolicyReference
 # In[ ]:
 
 --D.V1
+
+-- REBUILT on the back of VD.V1 from Gaps II. The earlier version read stg.DocRequestPolicies, which
+-- nothing in the notebook builds. This one matches the customer to the call through stg.Motor_PhoneNumbers
+-- and the INBOUND_Documents_Out queue, and keeps the Motor document description the count query used.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Motor',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'D.V1',
+    'Motor Doc Request - Replacement cert and disc',
+    'Policy'
+from    ods.EventStream a,
+        (select  distinct PolicyCode , conversationStartTime
+        from    stg.Motor_PhoneNumbers a, stg.DocRequest_genesys_derived_data_filtered b
+        Where   b.CustomerPhoneNumber = a.CustomerPhone) b
+Where   a.SourcePolicyReference = b.PolicyCode
+and     a.EventDateTime between b.conversationStartTime and dateadd(day,2,b.conversationStartTime)
+and     a.EventDescription = 'Duplicate Certificate - Document Transmitted - Certificate'
+Group by a.SourcePolicyReference
+;
+
 --VR1a
 
-Create or Replace Table stg.VanRenewals as 
-select  PolicyCode, TYPolicyCode, LYPolicyRenewDateAdj, LYEURGrossPremium, LYEURCommission,	LYEURFees, RenEURPremInvite,	RenEURPremAlternative, RenEURFee, PolicyOfferNum, PolicyRetNum, TYReportingSaleType,	TYReportingSaleCategory,	TYReportingSaleDate,
-TYEURGrossPremium,	TYEURCommission,	TYEURFees, Channel, RenewalsPortal,	SuccessfulLoginCount,FailedLoginCount, SuccessfulPaymentCount, FailedPaymentCount, DiaryPaymentTypeTY, PolicyCodeRevisedAtOffer
-from    edw.tbl_fact_policy_renewals
-where   RenewalMonth = '2026-07-31' 
-and     LYPolicyTypeGroup = 'Van' 
-Group by PolicyCode, TYPolicyCode, LYPolicyRenewDateAdj, LYEURGrossPremium, LYEURCommission,	LYEURFees, RenEURPremInvite,	RenEURPremAlternative, RenEURFee, PolicyOfferNum, PolicyRetNum, TYReportingSaleType,	TYReportingSaleCategory,	TYReportingSaleDate,
-TYEURGrossPremium,	TYEURCommission,	TYEURFees, Channel, RenewalsPortal,	SuccessfulLoginCount,FailedLoginCount, SuccessfulPaymentCount, FailedPaymentCount, DiaryPaymentTypeTY, PolicyCodeRevisedAtOffer
-
+-- stg.VanRenewals is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -9387,7 +10553,7 @@ SELECT  b.PolicyCode,
         'Policy'
 from    ods.eventstream a, stg.VanRenewalsJuly b  
 Where   a.SourcePolicyReference = b.PolicyCode
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 and     EventDescription like 'Renewal Offer - Emailed Document %'
 Group by b.PolicyCode
 
@@ -9415,7 +10581,7 @@ SELECT  b.PolicyCode,
         'Policy'
 from    ods.eventstream a, stg.VanRenewalsJuly b  
 Where   a.SourcePolicyReference = b.PolicyCode
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 and     EventDescription like 'Renewal Offer - Document Transmitted - %'
 Group by b.PolicyCode
 
@@ -9443,7 +10609,7 @@ SELECT  UserID,
         'User'
 from    dlk.EXT_XtremePushResults a, stg.VanRenewals b 
 where campaign_name like '%Van - Renewals%' and a.PolicyCode = b.PolicyCode 
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     interaction_type = 'sent' 
 and     MessageType  in ( 'EMAIL', 'SMS') 
 group by UserID
@@ -9553,6 +10719,37 @@ Group by a.TyPolicyCode
 
 # In[ ]:
 --VR3b.F1
+
+-- from Gaps II, which finally gives us the Van renewals queue name. Built to the call grain the other
+-- .F1 abandoned call steps use, with the ConversationId in EventSourceId and min(conversationStartTime)
+-- as the event time. The run window comes from stg.A0_genesys_derived_data, which is already built to it.
+insert INTO
+ods.EpisodeEventStream
+(
+    EventSourceId,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.ConversationId,
+    2,
+    'Van',
+    date_trunc('MINUTE', min(a.conversationStartTime)),
+    cast(min(a.conversationStartTime) as date),
+    'VR3b.F1',
+    'Van Renewal - Call wait time, or fails to make contact',
+    'Call'
+from    stg.A0_genesys_derived_data     a
+where   a.queueName = 'INBOUND_Van_Renewals'
+Group by a.ConversationId
+HAVING  sum(a.abandoned) > 0
+;
+
 --VR3.B1
 -- BLOCK HEADER. VR3.B1 is the heading for its sub-steps, not an event in its own right,
 -- so it writes nothing to the event stream. The events come from VR3.B1.1, VR3.B1.2.
@@ -9656,7 +10853,7 @@ from    (
             from    ods.eventstream a, stg.VanRenewalsJuly b  
             Where   a.SourcePolicyReference = b.TyPolicyCode
             and     PolicyRetNum = 1 
-            and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     EventDescription like '%C&D%'
             and     (   EventDescription like '%Emailed Document%' 
                     or 
@@ -9667,7 +10864,7 @@ from    (
             from    ods.eventstream a, stg.VanRenewalsJuly b  
             Where   a.SourcePolicyReference = b.PolicyCode
             and     PolicyRetNum = 1 
-            and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+            and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
             and     EventDescription like '%C&D%'
             and     (   EventDescription like '%Emailed Document%' 
                     or 
@@ -9705,7 +10902,7 @@ SELECT
     'Van Renewal - Chases before the customer submits, and documents never submitted',
     'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
 and PolicyType = 'Renewals'
 and PolicyTypeGroup = 'Van'
 and case
@@ -9852,7 +11049,7 @@ from
         where   campaign_name like '%Van%'
         and     campaign_name like '%Lapsed%'
         and     a.PolicyCode = b.PolicyCode
-        and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+        and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
         and     interaction_type = 'sent'
         and     MessageType  in ( 'EMAIL', 'SMS')
         union
@@ -9861,7 +11058,7 @@ from
         where   campaign_name like '%Van%'
         and     campaign_name like '%Lapsed%'
         and     a.PolicyCode = b.PolicyCode
-        and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+        and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
         and     interaction_type = 'sent'
         and     MessageType  in ( 'EMAIL', 'SMS')
     ) x
@@ -9900,7 +11097,7 @@ from    dlk.EXT_XtremePushResults_Policy a, stg.VanRenewalsJuly b
 where   campaign_name like '%Van%'
 and     campaign_name like '%Lapsed%'
 and     a.PolicyCode = b.PolicyCode
-and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     interaction_type = 'sent'
 and     MessageType  in ( 'EMAIL', 'SMS')
 and     a.PolicyCode not in
@@ -9910,7 +11107,7 @@ and     a.PolicyCode not in
             where   campaign_name like '%Van%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type in ('open','click')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -9921,7 +11118,7 @@ and     a.PolicyCode in
             where   campaign_name like '%Van%'
             and     campaign_name like '%Lapsed%'
             and     a.PolicyCode = b.PolicyCode
-            and     `timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             and     interaction_type in ('bounce')
             and     MessageType  in ( 'EMAIL', 'SMS')
         )
@@ -9985,7 +11182,7 @@ SELECT
     'Policy'
 from    dlk.EXT_XtremePushResults  a,
         stg.VanRenewalsJuly b
-where   a.`timestamp` between '2026-06-01 00:00:00.000' and '2026-09-01 00:00:00.000'
+where   a.`timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     a.PolicyCode = b.PolicyCode
 and     a.campaign_name like '%Van%'
 and     a.campaign_name like '%Lapsed%'
@@ -10024,7 +11221,7 @@ from    stg.VR0_VanPoliciesEligibleForRenewals  a,
         ods.EventStream                          d 
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.PolicyTypeGroup = 'Van'
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-01 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-01 00:00:00.000' 
 and     EventDescription in 
         (
                 'New Business - Saved Document - Document Checklist SMS',
@@ -10064,12 +11261,12 @@ from    (
             select  b.PolicyCode, b.`Timestamp`
             from    stg.VanRenewalsJuly a, dlk.MyChill_NewUploadDocumentEvents  b
             Where   a.PolicyCode = b.PolicyCode
-            and     `Timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `Timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             UNION
             select  b.PolicyCode, b.`Timestamp`
             from    stg.VanRenewalsJuly a, dlk.MyChill_NewUploadDocumentEvents  b
             Where   a.TyPolicyCode = b.PolicyCode
-            and     `Timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `Timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
         ) x
 Group by x.PolicyCode
 ;
@@ -10106,7 +11303,7 @@ SELECT
 from    (
         select  PolicyCode , min(CreateDate) FirstDate
         from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
         and PolicyType = 'Renewals'
         and PolicyTypeGroup = 'Van'
         and case
@@ -10177,8 +11374,8 @@ FROM    stg.VanRenewalsJuly                         a,
         ods.EventStream                             d
 Where   a.TyPolicyCode = d.SourcePolicyReference
 and     d.EventSourceId = 3
-and     d.EventDateTime > '2026-06-01 00:00:00.000'
-and     d.EventDateTime < '2026-09-01 00:00:00.000'
+and     d.EventDateTime > add_months((select startTime from stg.episodeeventstream_buildconfig), -1)
+and     d.EventDateTime < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     d.EventDescription like '%Chase%'
 and     d.EventDescription like '%Final%'
 Group by a.PolicyCode
@@ -10217,12 +11414,12 @@ from    (
             select  b.PolicyCode, b.`Timestamp`
             from    stg.VanRenewalsJuly a, dlk.MyChillWorkflow_DocumentStatus  b
             Where   a.PolicyCode = b.PolicyCode
-            and     `Timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `Timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
             UNION
             select  b.PolicyCode, b.`Timestamp`
             from    stg.VanRenewalsJuly a, dlk.MyChillWorkflow_DocumentStatus  b
             Where   a.TyPolicyCode = b.PolicyCode
-            and     `Timestamp` between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+            and     `Timestamp` between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
         ) x
 Group by x.PolicyCode
 ;
@@ -10258,7 +11455,7 @@ SELECT
 from    ods.eventstream a, stg.VanRenewalsJuly b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     EventDescription like '%CXL%'
 and     (   EventDescription like '%Emailed Document%'
         or
@@ -10268,7 +11465,7 @@ and     TyPolicyCode  in
         (select
                 PolicyCode
         from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31'
+        Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31'
         and PolicyType = 'Renewals'
         and PolicyTypeGroup = 'Van'
         and case
@@ -10337,7 +11534,7 @@ SELECT  a.PolicyCode,
 from    stg.VanRenewalsJuly a, dlk.MyChillWorkflow_DocumentStatus  b
 Where   a.TyPolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
-and     `Timestamp` < '2026-09-01 00:00:00.000'
+and     `Timestamp` < add_months((select endTime   from stg.episodeeventstream_buildconfig),  1)
 and     isAccepted = 'true'
 Group by a.PolicyCode
 ;
@@ -10374,7 +11571,7 @@ SELECT
 from    ods.eventstream a, stg.VanRenewalsJuly b
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */
 and     PolicyRetNum = 1
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000'
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000'
 and     (   EventDescription like '%Emailed Document%'
         or
             EventDescription like '%Document Transmitted%'
@@ -10392,7 +11589,7 @@ select  EventDescription, count(distinct b.PolicyCode)
 from    ods.eventstream a, stg.VanRenewalsJuly b  
 Where   a.SourcePolicyReference = b.TyPolicyCode /* new policy */ 
 and     PolicyRetNum = 1 
-and     EventDateTime between '2026-05-01 00:00:00.000' and '2026-08-10 00:00:00.000' 
+and     EventDateTime between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-08-10 00:00:00.000' 
 /*and     EventDescription like '%CXL%'
 and     (   EventDescription like '%Emailed Document%' 
         or 
@@ -10438,14 +11635,7 @@ Group by Email
 
 --VA0.F1
 
-Create or Replace Table stg.Van_genesys_inbound_call_duration_summary as 
-select	a.ConversationId, min(conversationStartTime) as conversationStartTime, 
-            sum(agentAnswered) as agentAnswered, sum(alertNoAnswer) alertNoAnswer, sum(abandoned) abandoned, 
-            sum(totalAcdWaitDuration) CallWaitTime, sum(totalAgentAlertDuration) CallRingTime, sum(totalAgentHoldDuration) CallHoldTime, sum(totalAgentTalkDuration) CallSpokenTime
-from	stg.A0_genesys_derived_data	a
-where	a.queueName = 'INBOUND_SALES_VAN'  
-Group by ConversationId
-
+-- stg.Van_genesys_inbound_call_duration_summary is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -10473,19 +11663,7 @@ group by a.conversationId;
 
 --VA0
 
-Create or Replace Table stg.Van_genesys_derived_data_filtered as 
-select	a.ConversationId, CustomerPhoneNumber,a.sessionIndex,A.conversationStartTime
-from	stg.A0_genesys_derived_data	a, /* built in Motor acq - but do not use across notebooks or structure the deps */ 
-		(select	ConversationId, max(sessionIndex) sessionIndex
-		from	stg.A0_genesys_derived_data
-		Where	queueName is not null 
-		and		originatingDirection = 'inbound'
-		Group by ConversationId
-		)	b 
-where	a.ConversationId = b.ConversationId
-and		a.sessionIndex = b.sessionIndex
-and		queueName = 'INBOUND_SALES_VAN'
-;
+-- stg.Van_genesys_derived_data_filtered is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -10513,15 +11691,7 @@ group by a.conversationId;
 
 --VA5
 
-Create or Replace Table stg.VanSales as 
-select  PolicyCode, PolicyStatusDesc, Channel, FinanceFlag, RenewalTransferFlag, EURGrossPremium, EURFees, ReportingSaleCategory, ReportingSaleType, ReportingSalesDate
-from    edw.tbl_fact_policy_sales 
-where   EffectiveDate = '2026-07-31' 
-and     PolicyTypeGroup = 'Van' 
-and     ReportingSaleCategory = 'Cat A1: Active Sale'
-and     PolicyCloseNum = 1 
-Group by PolicyCode, PolicyStatusDesc, Channel, FinanceFlag, RenewalTransferFlag, EURGrossPremium, EURFees , ReportingSaleCategory, ReportingSaleType, ReportingSalesDate
-
+-- stg.VanSales is built in the Derived Data section at the top of this notebook.
 insert INTO
 ods.EpisodeEventStream
 (        
@@ -10655,7 +11825,7 @@ SELECT
     'Van Acquisition - Documents never submitted, policy at risk of cancellation',
     'Policy'
 from edw.EXP_MyChill_Chase_Daily_Snapshot_MotorVan a
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31' 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31' 
 and PolicyType = 'Renewals' 
 and PolicyTypeGroup = 'Van' 
 and case 
@@ -10740,6 +11910,46 @@ Group by a.PolicyCode
 
 --VA7.B1
 --VA5.B1.4
+
+-- from Gaps II. The pasted query reads stg.VanSalesJuly, which has no build in the notebook, so it
+-- reads stg.VanSales instead, which is the July Van sales table the rest of the notebook uses and
+-- carries ReportingSaleType. min(EventDateTime) is the first chase email. The July window is the run
+-- window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(d.EventDateTime)),
+    cast(min(d.EventDateTime) as date),
+    'VA5.B1.4',
+    'Van Acquisition - Chase, inconsistency resolution',
+    'Policy'
+FROM    stg.VanSales                             a,
+        ods.EventStream                          d
+Where   a.PolicyCode = d.SourcePolicyReference
+and     d.EventSourceId = 3
+and     d.PolicyTypeGroup = 'Van'
+and     d.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and d.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.ReportingSaleType = 'New Business'
+and     d.EventDescription in
+        (
+            'Document Chase - Emailed Document - PC Chase Email'
+        )
+Group by a.PolicyCode
+;
+
 --VA6.B1.1
 -- mirrored from A6.B1.1. Straight swap of the product literals on the same MotorVan chase snapshot, with the PolicyTypeGroup filter moved to Van.
 
@@ -11312,7 +12522,7 @@ SELECT
         'Van MTA - Chases before the customer submits, and documents never submitted',
         'Policy'
 from    edw.EXP_MyChill_Chase_Daily_Snapshot_Home a 
-Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between '2026-05-01' and '2026-07-31' 
+Where	coalesce(try_cast(concat(right(SaleDate,4), '-',substring(SaleDate,4,2),'-',left(SaleDate,2)) as date),'1900-01-01') between add_months((select startTime from stg.episodeeventstream_buildconfig), -1) and '2026-07-31' 
 and     PolicyTypeGroup = 'Van' 
 and case 
         When Comp_DDM_Status				= 'O' then 1 
@@ -11480,12 +12690,10 @@ and     b.PolicyCode in
             and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer') 
         )
 Group by a.PolicyCode
-        
---VM3.B1.4
 
 # In[ ]:
 
---VM3.B1.5
+--VM3.B1.4
 
 insert INTO
 ods.EpisodeEventStream
@@ -11566,8 +12774,7 @@ from    (
             )  a, dlk.MyChillWorkflow_DocumentStatus  b 
 Where   a.PolicyCode = b.PolicyCode
 and     `Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and `Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig) 
-and     isAccepted = 'true'
-group by PolicyCode  
+group by a.PolicyCode
 
 --VM3.B1.O1
 
@@ -11629,12 +12836,46 @@ group by a.PolicyCode
 
 --VM3.B1.6
 
+-- mirrored from HM4.B1.6. The MTA base swapped to Van, with isAccepted true marking the
+-- documents that were received AND validated, which is how A6.B1.6 and HM4.B1.6 read this step.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    b.PolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', max(b.`Timestamp`)),
+    cast(max(b.`Timestamp`) as date),
+    'VM3.B1.6',
+    'Van MTA - Documents received and validated',
+    'Policy'
+from    (
+                select  b.PolicyCode
+                from    stg.JJulyMTAs a, stg.JulyPolicyState b
+                Where   a.PolicyCode = b.PolicyCode
+                and     PolicyTypeGroup = 'Van'
+                and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
+            )  a, dlk.MyChillWorkflow_DocumentStatus  b
+Where   a.PolicyCode = b.PolicyCode
+and     b.`Timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and b.`Timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
+and     b.isAccepted = 'true'
+Group by b.PolicyCode
+;
 
 # In[ ]:
 
 --VM3.B1.5
 -- mirrored from M3.B1.5. The chase snapshot stays but is read at PolicyTypeGroup Van, and the flat join to stg.MotorMTAPolicies is replaced by the nested PolicyCode in list over stg.JJulyMTAs and stg.JulyPolicyState used by the Van sibling VM3.B1.4 because that Motor staging table has no Van counterpart.
--- Note the VM3.B1.4 marker above shares its cell with the VM3.B1.4 insert, so this one sits here.
 
 insert INTO
 ods.EpisodeEventStream
@@ -11729,6 +12970,55 @@ Group by a.PolicyCode
 # In[ ]:
 
 --VM6.B1.2
+
+-- mirrored from HM6.B1.2. Straight product swap to Van. Note this is the same population as VM6.B1.1,
+-- exactly as HM6.B1.1 and HM6.B1.2 are the same population on Home, which is what the recon expects:
+-- HM6.B1.1, HM6.B1.2 and HM6.B1.3 all carry the same Fabric volume.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(d.EventDateTime)),
+    cast(min(d.EventDateTime) as date),
+    'VM6.B1.2',
+    'Van MTA - Document pack dispatched',
+    'Policy'
+FROM    (
+            select  b.PolicyCode
+            from    stg.JJulyMTAs a, stg.JulyPolicyState b
+            Where   a.PolicyCode = b.PolicyCode
+            and     PolicyTypeGroup = 'Van'
+            and     PolicyStatusDesc not in ('Cancelled', 'Lapsed', 'Cancelled Mid Term' , 'Lapsed for Transfer')
+        )                                       a,
+        ods.EventStream                          d
+Where   a.PolicyCode = d.SourcePolicyReference
+and     d.EventSourceId = 3
+and     d.PolicyTypeGroup = 'Van'
+and     d.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and d.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     d.EventDescription in
+        (
+            'New Business - Emailed Document - Terms Of Business',
+            'New Business - Emailed Document - Cover Letter',
+            'New Business - Emailed Document - 04 - Suitability Statement',
+            'New Business - Document Transmitted - 04 - Suitability Statement',
+            'New Business - Document Transmitted - Terms Of Business',
+            'New Business - Document Transmitted - Cover Letter'
+        )
+Group by a.PolicyCode
+;
+
 --VM6.B1.3
 --VM6.B1.4
 --VM6.B1.5
@@ -11759,7 +13049,7 @@ from    edw.tbl_fact_policy_mtc a,
         stg.JulyPolicyState     b
 Where   a.PolicyCode = b.PolicyCode
 and     a.PolicyTypeGroup = 'Van'
-and     a.EffectiveDate = '2026-07-31'
+and     a.EffectiveDate = (select effectiveDate from stg.episodeeventstream_buildconfig)
 and     (
             a.ShortDescription like 'Client%'
         or
@@ -11928,6 +13218,39 @@ Group by a.SourcePolicyReference
 
 --VC6
 
+-- from Gaps II. The Group by EventDescription in the count was an eyeballing breakdown and is dropped,
+-- leaving one row per policy. min(EventDateTime) is when the confirmation went out and the July window
+-- is the run window so it takes the build config. This description also gives us HC6, and a better C6
+-- than the one built off stg.JulyMotorCancellations.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'VC6',
+    'Van Cancellation - Cancellation confirmation sent',
+    'Policy'
+from    ods.eventstream     a
+Where   a.EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and a.EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.EventSourceId = 3
+and     a.PolicyTypeGroup = 'Van'
+and     a.EventDescription = 'Insurer Led Cancelation - Emailed Document - Reg canx email template'
+Group by a.SourcePolicyReference
+;
+
 --VARR.1
 
 insert INTO
@@ -12090,7 +13413,87 @@ and     MessageType in ('SMS', 'EMAIL')
 and     PolicyTypeGroup = 'Van'
 group by PolicyCode
 --VARR.O2
+
+-- from Gaps II. The Insurer Led subquery now projects EventDateTime so the insert has a timestamp,
+-- and min is used because the escalation is the first forced cancellation event. Note this version
+-- takes the arrears population from the two XtremePush feeds unioned, where HARR.O2 and ARR.O2 go
+-- through tmp.CurrentPolicy. Say the word and I will put all three on the same route.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'VARR.O2',
+    'Van Arrears - Escalation to forced cancellation',
+    'Policy'
+from            (select  distinct SourcePolicyReference, EventDateTime
+                from    ods.eventstream        a
+                Where   EventDateTime >= (select startTime from stg.episodeeventstream_buildconfig) and EventDateTime < (select endTime   from stg.episodeeventstream_buildconfig)
+                and     EventSourceId = 3
+                and     PolicyTypeGroup = 'Van'
+                and     EventDescription like 'Insurer Led%') a,
+                (select  distinct PolicyCode
+                from    dlk.EXT_XtremePushResults
+                where   upper(campaign_name) like '%RREARS%'
+                and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig)
+                and     MessageType in ('SMS', 'EMAIL')
+                UNION
+                select  distinct PolicyCode
+                from    dlk.EXT_XtremePushResults_Policy
+                where   upper(campaign_name) like '%RREARS%'
+                and     timestamp >= (select startTime from stg.episodeeventstream_buildconfig) and timestamp < (select endTime   from stg.episodeeventstream_buildconfig)
+                and     MessageType in ('SMS', 'EMAIL')
+                ) b
+Where   a.SourcePolicyReference = b.PolicyCode
+Group by a.SourcePolicyReference
+;
+
 --VCL1a
+
+-- REBUILT from Gaps II. The earlier version read stg.DocRequestClientCodes, which was the Doc Request
+-- staging table. This one goes through the INBOUND_Claims queue and the new stg.Van_PhoneNumbers, which
+-- is the population you meant. conversationStartTime is when the claim was reported and SourceSystemId
+-- is 2 because the call comes from Genesys.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.PolicyCode,
+    2,
+    'Van',
+    date_trunc('MINUTE', min(b.conversationStartTime)),
+    cast(min(b.conversationStartTime) as date),
+    'VCL1a',
+    'Van Claims - Van claim reported',
+    'Policy'
+from    stg.Van_PhoneNumbers                        a,
+        stg.Claims_genesys_derived_data_filtered    b
+Where   b.CustomerPhoneNumber = a.CustomerPhone
+Group by a.PolicyCode
+;
+
 --VD1
 -- converted from the count query, split by PolicyTypeGroup per your instruction, so HD1, D1 and VD1 each
 -- carry their own product. The Group by EventDescription and Order by were an eyeballing breakdown and are
@@ -12304,6 +13707,44 @@ Group by x.SourcePolicyReference
 # In[ ]:
 
 --VD.V1
+
+-- from Gaps II. The customer is matched to the call through the new stg.Van_PhoneNumbers and the
+-- INBOUND_Documents_Out queue, and the document has to land within two days of the call.
+-- min(a.EventDateTime) is when the replacement certificate and disc went out.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourcePolicyReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.SourcePolicyReference,
+    1,
+    'Van',
+    date_trunc('MINUTE', min(a.EventDateTime)),
+    cast(min(a.EventDateTime) as date),
+    'VD.V1',
+    'Van Doc Request - Replacement cert and disc',
+    'Policy'
+from    ods.EventStream a,
+        (select  distinct PolicyCode , conversationStartTime
+        from    stg.Van_PhoneNumbers a, stg.DocRequest_genesys_derived_data_filtered b
+        Where   b.CustomerPhoneNumber = a.CustomerPhone) b
+Where   a.SourcePolicyReference = b.PolicyCode
+and     a.EventDateTime between b.conversationStartTime and dateadd(day,2,b.conversationStartTime)
+and     a.EventDescription in
+        (
+            'Prior Year Quotes - Emailed Document - C&D Email'
+        )
+Group by a.SourcePolicyReference
+;
+
 --TA1
 
 insert INTO
@@ -12331,29 +13772,11 @@ from    dlk.EXT_Travel_Quotes
 WHERE Travel_QuoteDate >= (select startTime from stg.episodeeventstream_buildconfig) and Travel_QuoteDate < (select endTime   from stg.episodeeventstream_buildconfig) 
 AND rtrim(ltrim(travel_certificatestatus)) IN ('Completed Quote','Incomplete Quote','Cancelled','Live')
 and len(email)>0
+Group by a.quote_number
 
 --TA1p
 
-Create or Replace table stg.TravelQuotes 
-select	quote_number, 'Q' as SourceType , travel_certificatestatus, travel_purchaseDate, case when business_type = 'Renewal' then 1 else 0 end RenewalFlag
-FROM dlk.EXT_Travel_Quotes 
-    WHERE Travel_QuoteDate >= (select startTime from stg.episodeeventstream_buildconfig) and Travel_QuoteDate < (select endTime   from stg.episodeeventstream_buildconfig) 
-	     AND rtrim(ltrim(travel_certificatestatus)) IN ('Completed Quote','Incomplete Quote','Cancelled')   and len(email)>0
-Group by quote_number, travel_certificatestatus, travel_purchaseDate, case when business_type = 'Renewal' then 1 else 0 end 
-union all 
-select p.QuoteId, 'P' , RecordType , p.PurchaseDate, RenewalFlag,
-FROM dlk.EXT_Travel_policy p
-	left join dlk.EXT_Travel_Quotes  q on p.QuoteId = q.quote_number 
-WHERE p.PurchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and p.PurchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
-and	  q.quote_number is null 	
-Group by p.QuoteId , RecordType ,p.PurchaseDate, RenewalFlag
-union all 
-select p.QuoteId, 'P' , q.travel_certificatestatus , p.PurchaseDate, RenewalFlag
-FROM dlk.EXT_Travel_policy p
-	join dlk.EXT_Travel_Quotes  q on p.QuoteId = q.quote_number 
-WHERE p.PurchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and p.PurchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
-Group by p.QuoteId ,q.travel_certificatestatus , p.PurchaseDate, RenewalFlag
-;
+-- stg.TravelQuotes is built in the Derived Data section at the top of this notebook.
 
 insert INTO
 ods.EpisodeEventStream
@@ -12407,7 +13830,7 @@ SELECT
         'TA5',
         'Travel Acquisition - Purchase confirmed by next-day CSV',
         'Quote'
-from   stg.TravelQuotes
+from   stg.TravelQuotes a
 where travel_purchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and travel_purchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
 and RenewalFlag = 0
 Group by a.quote_number
@@ -12436,12 +13859,48 @@ SELECT
         'Travel Acquisition - Purchase',
         'Quote'
 from    edw.tbl_fact_TravelAllQuotesSales a 
-Where   Effective_Date = '2026-07-31' 
+Where   Effective_Date = (select effectiveDate from stg.episodeeventstream_buildconfig) 
 and     travel_purchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and travel_purchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
 and     Business_Type = 'New Business'
 group by quote_number
 
 --TR1.E1
+
+-- from Gaps II. The distinct email is the grain so it goes into SourceCustomerReference. The square
+-- bracket quoting in the pasted query is T-SQL, so timestamp is written with backticks here. The July
+-- window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourceCustomerReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    a.email,
+    1,
+    'Travel',
+    date_trunc('MINUTE', min(a.`timestamp`)),
+    cast(min(a.`timestamp`) as date),
+    'TR1.E1',
+    'Travel Renewal - Travel renewal date campaign',
+    'Customer'
+from    dlk.ext_xtremepushresults_policy    a
+where   a.campaign_name in
+        (
+            'Travel - Renewal Date in the next 14 Days',
+            'Travel - Renewal Date in the next  7 Days'
+        )
+and     a.`timestamp` >= (select startTime from stg.episodeeventstream_buildconfig) and a.`timestamp` < (select endTime   from stg.episodeeventstream_buildconfig)
+and     a.MessageType in ('EMAIL', 'SMS')
+Group by a.email
+;
+
 --TR4
 
 insert INTO
@@ -12465,10 +13924,39 @@ SELECT
         'TR4',
         'Travel Renewal - Renewal processed',
         'Quote'
-from   stg.TravelQuotes
+from   stg.TravelQuotes a
 where travel_purchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and travel_purchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)	
 and RenewalFlag = 1
 Group by a.quote_number
 
 --TR.O1
 
+-- from Gaps II. Your note says this is 2130 rather than the 10106 that SQL09 reports, because that
+-- figure is renewals and new business together. QuoteId is the reference the other Travel steps use,
+-- PurchaseDate supplies the timestamp, and the July window is the run window so it takes the build config.
+insert INTO
+ods.EpisodeEventStream
+(
+    SourceQuoteReference,
+    SourceSystemId,
+    PolicyTypeGroup,
+    EventDateTime,
+    EventDate,
+    EventTypeId,
+    EventDescription,
+    Grain
+)
+SELECT
+    p.QuoteId,
+    1,
+    'Travel',
+    date_trunc('MINUTE', max(p.PurchaseDate)),
+    cast(max(p.PurchaseDate) as date),
+    'TR.O1',
+    'Travel Renewal - Policy continues, re-purchased',
+    'Quote'
+from    dlk.EXT_Travel_Policy   p
+WHERE   p.PurchaseDate >= (select startTime from stg.episodeeventstream_buildconfig) and p.PurchaseDate < (select endTime   from stg.episodeeventstream_buildconfig)
+and     p.RenewalFlag = 1
+Group by p.QuoteId
+;
