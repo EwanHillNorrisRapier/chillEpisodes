@@ -23,18 +23,17 @@
     ------------------------------------------------------------------------------------
     WHAT THIS SCRIPT DOES NOT CREATE
 
-    It creates 5 tables, 2 functions and 38 procedures. These objects are read or written
+    It creates 10 tables, 2 functions and 38 procedures. These objects are read or written
     by the procedures but are not created anywhere in this file, so they have to exist
     before the harness will run:
 
-        ops.CSPExecutionGraph                ops.CSPLogStreamMetricMeasure
-        ops.CSPExecutionGraphNode            ops.CSPLogStreamMetricResults
-        ops.CSPExecutionMasterGraphNode      ops.CSPLogStreamMetrics
-        ops.CSPExecutionParameters           ops.CSPScheduledItem
+        ops.CSPExecutionMasterGraph          ops.CSPLogStreamMetrics
+        ops.CSPExecutionMasterGraphNode      ops.CSPScheduledItem
         ops.CSPExecutionStrings              ops.CSPScheduledItemString
         ops.CSPLoadLog                       ops.CSPScheduleGraph
-        ops.CSPLogStream                     ops.CSPScheduleGraphNode
-        ops.CSPLogStreamLive                 ops.CSPScheduleGraphSegment
+        ops.CSPLogStreamMetricMeasure        ops.CSPScheduleGraphNode
+        ops.CSPLogStreamMetricResults        ops.CSPScheduleGraphSegment
+        ops.CspExportTablesList
 
         ops.cspGetFailedLCLTRecordsByGraphId  (function, see the caveat above)
 
@@ -65,8 +64,12 @@
     schema is ops and fails for anyone else.
     ------------------------------------------------------------------------------------
 
-    Run order is tables, then functions, then procedures. Batches are separated with GO
-    because CREATE PROCEDURE and CREATE FUNCTION have to start a batch.
+    Run order is tables, then functions, then procedures, and it matters. The two functions
+    read ops.CSPExecutionGraph, and a function binds what it references at creation time,
+    so both fail to create if the table is not already there. Procedures are different:
+    T-SQL defers their name resolution, which is why the other missing tables above do not
+    stop the script. Batches are separated with GO because CREATE PROCEDURE and CREATE
+    FUNCTION have to start a batch.
 
     Formatting note: the source was copied out of an SSMS grid, which turned every line
     break into spaces. The line breaks here were reconstructed, so indentation is close to
@@ -79,6 +82,108 @@
 -- ==============================================================================================
 
 -- ----------------------------------------------------------------------------------------------
+--  [ops].[CSPExecutionGraph]
+--  This one has to be created before the two functions below, which both read it. An inline
+--  table-valued function binds the objects it references when it is created, unlike a
+--  procedure, so neither function will create while this table is missing.
+--  It also holds the execution history, where the other five tables are lookups and
+--  counters, so the DROP below is the one on this script that loses real data.
+-- ----------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS [ops].[CSPExecutionGraph];
+GO
+
+CREATE TABLE [ops].[CSPExecutionGraph] (
+    [CSPExecutionId] INT NULL,
+    [CSPContextId] INT NULL,
+    [CSPGraphId] INT NULL,
+    [CSPGraphStartDateTime] DATETIME2(0) NULL,
+    [CSPGraphEndDateTime] DATETIME2(0) NULL,
+    [CSPExecutionStatusFlag] INT NULL )
+;
+GO
+
+-- ----------------------------------------------------------------------------------------------
+--  [ops].[CSPExecutionGraphNode]
+--  Holds the per-node execution history, so the DROP below loses real data.
+--  ops.CSPExecGraphNodeTypeSQL and ops.CSPExecGraphNodeTypeGraph insert six of these
+--  columns by name and later update CSPGraphNodeEndDateTime. CSPRecordsProcessed and
+--  CSPClientId are never written by the harness, which is fine while they stay nullable.
+-- ----------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS [ops].[CSPExecutionGraphNode];
+GO
+
+CREATE TABLE [ops].[CSPExecutionGraphNode] (
+    [CSPExecutionId] INT NULL,
+    [CSPContextId] INT NULL,
+    [CSPGraphId] INT NULL,
+    [CSPGraphNodeId] INT NULL,
+    [CSPGraphNodeStartDateTime] DATETIME2(6) NULL,
+    [CSPGraphNodeEndDateTime] DATETIME2(6) NULL,
+    [CSPExecutionStatusFlag] INT NULL,
+    [CSPRecordsProcessed] INT NULL,
+    [CSPClientId] INT NULL )
+;
+GO
+
+-- ----------------------------------------------------------------------------------------------
+--  [ops].[CSPExecutionParameters]
+--  Holds the ## token substitutions. ops.CSPSubstituteParams matches a row with
+--      COALESCE([CSPContextId], @cspcontextid) = @cspcontextid   and the same for the
+--      execution, graph and node ids
+--  so NULL in a scope column is a wildcard, and a row with all four NULL applies to every
+--  node. It also needs exactly one row to match, since it checks @@ROWCOUNT <> 1.
+--  ops.CSPRemoveExecutionParameters and ops.CSPSetExecutionParameters rewrite the
+--  CONTEXTID, RUNID, GRAPHID, GRAPHNODEID and MASTERRUNID rows on every node, so those
+--  five are not seeded here.
+-- ----------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS [ops].[CSPExecutionParameters];
+GO
+
+CREATE TABLE [ops].[CSPExecutionParameters] (
+    [CSPParameterLevelCode] INT NULL,
+    [CSPContextId] INT NULL,
+    [CSPExecutionId] INT NULL,
+    [CSPGraphId] INT NULL,
+    [CSPGraphNodeId] INT NULL,
+    [CSPParmName] VARCHAR(255) NULL,
+    [CSPParmValue] VARCHAR(255) NULL,
+    [CSPClientId] INT NULL )
+;
+GO
+
+--  Seed rows, as supplied.
+--
+--  WARNING on the LOGSTREAM value. It calls ops.CSPStreamLogger with the parameter names
+--  @CSPContextId, @CSPexecutionId, @CSPgraphid and @CSPgraphnodeid, but this script now
+--  declares that procedure with @cspcontextid, @cspexecutionid, @cspgraphid and
+--  @cspgraphnodeid. On a case-sensitive warehouse the named arguments will not bind and
+--  any node substituting ##LOGSTREAM## will fail. Lower-case the four names in the value
+--  if you hit that.
+INSERT INTO ops.CSPExecutionParameters
+    (
+        CSPParmName,
+        CSPParmValue
+    )
+VALUES
+    ('LOGSTREAM', 'exec [ops].[CSPStreamLogger] @CSPContextId = ##CONTEXTID##, @CSPexecutionId = ##RUNID##, @CSPgraphid = ##GRAPHID##, @CSPgraphnodeid = ##GRAPHNODEID##, ');
+GO
+
+INSERT INTO ops.CSPExecutionParameters
+    (
+        CSPParameterLevelCode,
+        CSPContextId,
+        CSPExecutionId,
+        CSPGraphId,
+        CSPGraphNodeId,
+        CSPParmName,
+        CSPParmValue,
+        CSPClientId
+    )
+VALUES
+    (NULL, 1, NULL, -1, NULL, 'TARGETSCHEMA', 'src', 1);
+GO
+
+-- ----------------------------------------------------------------------------------------------
 --  [ops].[CSPExecutionStatus]
 -- ----------------------------------------------------------------------------------------------
 DROP TABLE IF EXISTS [ops].[CSPExecutionStatus];
@@ -87,6 +192,52 @@ GO
 CREATE TABLE [ops].[CSPExecutionStatus] (
     [CSPExecutionStatusCode] INT NULL,
     [CSPExecutionStatusDescription] VARCHAR(100) NULL )
+;
+GO
+
+-- ----------------------------------------------------------------------------------------------
+--  [ops].[CSPLogStream]
+--  The permanent log. ops.CSPStreamLogger writes a row here on almost every step, so
+--  nothing much runs without it. The DROP below loses the whole log history.
+--  CSPClientId is never written by the harness.
+-- ----------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS [ops].[CSPLogStream];
+GO
+
+CREATE TABLE [ops].[CSPLogStream] (
+    [CSPLogDateTime] DATETIME2(6) NULL,
+    [CSPExecutionId] INT NULL,
+    [CSPContextId] INT NULL,
+    [CSPGraphId] INT NULL,
+    [CSPGraphNodeId] INT NULL,
+    [CSPLogTypeCode] INT NULL,
+    [CSPLogStringShort] VARCHAR(50) NULL,
+    [CSPLogStringLong] VARCHAR(255) NULL,
+    [CSPRecordCount] BIGINT NULL,
+    [CSPClientId] INT NULL )
+;
+GO
+
+-- ----------------------------------------------------------------------------------------------
+--  [ops].[CSPLogStreamLive]
+--  The same shape, holding only the current execution. ops.CSPStreamLogger writes to both,
+--  ops.CSPExecGraphFinalise counts the failures here to decide whether the graph passed,
+--  then clears the rows for that execution. Safe to drop, since it is emptied each run.
+-- ----------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS [ops].[CSPLogStreamLive];
+GO
+
+CREATE TABLE [ops].[CSPLogStreamLive] (
+    [CSPLogDateTime] DATETIME2(6) NULL,
+    [CSPExecutionId] INT NULL,
+    [CSPContextId] INT NULL,
+    [CSPGraphId] INT NULL,
+    [CSPGraphNodeId] INT NULL,
+    [CSPLogTypeCode] INT NULL,
+    [CSPLogStringShort] VARCHAR(50) NULL,
+    [CSPLogStringLong] VARCHAR(255) NULL,
+    [CSPRecordCount] BIGINT NULL,
+    [CSPClientId] INT NULL )
 ;
 GO
 
@@ -119,7 +270,7 @@ DROP TABLE IF EXISTS [ops].[CSPNextExecutionId];
 GO
 
 CREATE TABLE [ops].[CSPNextExecutionId] (
-    [CSPExecutionId] INT NULL )
+    [cspExecutionId] INT NULL )
 ;
 GO
 
@@ -2451,8 +2602,8 @@ BEGIN
         BEGIN
             BEGIN TRANSACTION;
             UPDATE ops.CSPNextExecutionId
-            SET CSPExecutionId = CSPExecutionId + 1;
-            SELECT @NewExecutionId = CSPExecutionId
+            SET cspExecutionId = cspExecutionId + 1;
+            SELECT @NewExecutionId = cspExecutionId
             FROM ops.CSPNextExecutionId;
             INSERT INTO ops.CSPExecutionGraph
             VALUES (@NewExecutionId, @cspcontextid, @cspgraphid, getdate(), NULL, 1);

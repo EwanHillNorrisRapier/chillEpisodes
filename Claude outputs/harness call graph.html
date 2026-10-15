@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{color-scheme:light}body{margin:0;font:14px system-ui,-apple-system,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Harness Call Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+</head>
+<body>
+<style>
+/* Layout: five labelled bands, one per family of objects, with call arrows drawn between them. */
+:root{
+  --bg:#f6f7f9; --panel:#fff; --sunk:#eef1f5; --line:#d6dce5; --band:#f1f4f8;
+  --ink:#141922; --ink-2:#5b6676; --ink-3:#8a95a5;
+  --accent:#1f5f9e; --accent-soft:#dbe8f6;
+  --engine:#1f5f9e; --engine-soft:#dbe8f6;
+  --utility:#2f7d63; --utility-soft:#dcefe8;
+  --authoring:#7a5bbd; --authoring-soft:#e7e1f7;
+  --metrics:#b26a05; --metrics-soft:#fbeed6;
+  --content:#a63d5c; --content-soft:#f8e0e7;
+  --arrow:#9aa6b6;
+  --radius:7px;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#11151b; --panel:#171d25; --sunk:#1e252f; --line:#2b3542; --band:#1b222b;
+  --ink:#e6ebf2; --ink-2:#a3aebd; --ink-3:#6f7b8a;
+  --accent:#5fa8e8; --accent-soft:#17304a;
+  --engine:#5fa8e8; --engine-soft:#16304c;
+  --utility:#5cba99; --utility-soft:#13332a;
+  --authoring:#a995e8; --authoring-soft:#241e3d;
+  --metrics:#e0a33c; --metrics-soft:#352813;
+  --content:#e0829c; --content-soft:#3a1c26;
+  --arrow:#4a586c; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#11151b; --panel:#171d25; --sunk:#1e252f; --line:#2b3542; --band:#1b222b;
+  --ink:#e6ebf2; --ink-2:#a3aebd; --ink-3:#6f7b8a;
+  --accent:#5fa8e8; --accent-soft:#17304a;
+  --engine:#5fa8e8; --engine-soft:#16304c;
+  --utility:#5cba99; --utility-soft:#13332a;
+  --authoring:#a995e8; --authoring-soft:#241e3d;
+  --metrics:#e0a33c; --metrics-soft:#352813;
+  --content:#e0829c; --content-soft:#3a1c26;
+  --arrow:#4a586c; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);margin:0;line-height:1.5}
+.wrap{max-width:1288px;margin:0 auto;padding-inline:16px;padding-block:28px 56px}
+h1{font-size:clamp(1.45rem,1.1rem + 1.4vw,2rem);font-weight:700;letter-spacing:-.02em;margin:0 0 6px;text-wrap:balance}
+.sub{color:var(--ink-2);margin:0 0 24px;max-width:64ch}
+h2{font-size:1.02rem;font-weight:600;margin:0 0 10px}
+.eyebrow{font-family:var(--mono);font-size:.68rem;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px}
+.answer{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:var(--radius);padding:15px 17px;margin-bottom:26px}
+.answer p{margin:0 0 9px;font-size:.88rem;color:var(--ink-2)} .answer p:last-child{margin:0}
+.answer strong{color:var(--ink);font-weight:600}
+code{font-family:var(--mono);font-size:.88em;background:var(--sunk);padding:1px 4px;border-radius:3px}
+.rail{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.seg{display:inline-flex;background:var(--sunk);border:1px solid var(--line);border-radius:var(--radius);padding:2px;gap:2px}
+button{font:inherit;font-size:.8rem;color:var(--ink-2);background:none;border:0;border-radius:5px;padding:5px 11px;cursor:pointer}
+button:hover{color:var(--ink)}
+button[aria-pressed="true"]{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.canvas{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow-x:auto}
+svg{display:block;min-width:1180px;width:100%;height:auto}
+.bandbg{fill:var(--band)} .bandbg.off{opacity:.35}
+.bandttl{font-family:var(--sans);font-size:12.5px;font-weight:600;fill:var(--ink)}
+.bandsub{font-family:var(--sans);font-size:10.5px;fill:var(--ink-3)}
+.n{cursor:pointer} .n text{font-family:var(--mono);font-size:9.6px;fill:var(--ink);dominant-baseline:middle}
+.n rect{stroke-width:1.3;rx:5}
+.f-engine rect{fill:var(--engine-soft);stroke:var(--engine)}
+.f-utility rect{fill:var(--utility-soft);stroke:var(--utility)}
+.f-authoring rect{fill:var(--authoring-soft);stroke:var(--authoring)}
+.f-metrics rect{fill:var(--metrics-soft);stroke:var(--metrics)}
+.f-content rect{fill:var(--content-soft);stroke:var(--content)}
+.n.iso rect{stroke-dasharray:3.5 3}
+.e{fill:none;stroke:var(--arrow);stroke-width:1.1;opacity:.55;marker-end:url(#a)}
+.e.cross{stroke-dasharray:4 3;opacity:.4}
+.dim .n{opacity:.2} .dim .e{opacity:.06}
+.dim .n.on{opacity:1} .dim .e.on{opacity:1;stroke-width:2}
+.n.sel rect{stroke-width:2.6}
+.hide{display:none}
+.legend{display:flex;flex-wrap:wrap;gap:6px 15px;font-size:.74rem;color:var(--ink-2);margin:12px 0 0}
+.legend i{display:inline-block;width:18px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1.3px solid}
+.l1{border-color:var(--engine);background:var(--engine-soft)} .l2{border-color:var(--utility);background:var(--utility-soft)}
+.l3{border-color:var(--authoring);background:var(--authoring-soft)} .l4{border-color:var(--metrics);background:var(--metrics-soft)}
+.l5{border-color:var(--content);background:var(--content-soft)}
+.l6{border-color:var(--ink-3);background:none;border-style:dashed}
+.detail{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px 16px;margin-top:12px;min-height:104px}
+.detail h3{font-family:var(--mono);font-size:.95rem;font-weight:600;margin:0 0 3px;word-break:break-word}
+.meta{font-size:.78rem;color:var(--ink-2);margin:0 0 12px}
+.refs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.refs section{min-width:0}
+.refs h4{font-family:var(--mono);font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);margin:0 0 5px;font-weight:600}
+.refs ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-family:var(--mono);font-size:.72rem;background:var(--sunk);border:1px solid var(--line);border-radius:4px;
+  padding:2px 6px;cursor:pointer;color:var(--ink-2);overflow-wrap:anywhere}
+.chip:hover{color:var(--ink);border-color:var(--accent)}
+.none{font-size:.78rem;color:var(--ink-3);margin:0}
+.block{margin-top:34px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:.8rem;min-width:600px}
+th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{cursor:pointer} tbody tr:hover td{background:var(--sunk)}
+td.name{font-family:var(--mono);font-weight:500;overflow-wrap:anywhere}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;color:var(--ink-2)}
+.tag{font-family:var(--mono);font-size:.68rem;padding:1px 6px;border-radius:3px;border:1px solid;white-space:nowrap}
+.t-engine{border-color:var(--engine);color:var(--engine);background:var(--engine-soft)}
+.t-utility{border-color:var(--utility);color:var(--utility);background:var(--utility-soft)}
+.t-authoring{border-color:var(--authoring);color:var(--authoring);background:var(--authoring-soft)}
+.t-metrics{border-color:var(--metrics);color:var(--metrics);background:var(--metrics-soft)}
+.t-content{border-color:var(--content);color:var(--content);background:var(--content-soft)}
+@media (prefers-reduced-motion:no-preference){.n,.e{transition:opacity .16s ease}}
+</style>
+
+<div class="wrap">
+<h1>Harness Call Graph</h1>
+<p class="sub">Only the 41 procedures and functions, and only the arrows where one executes or calls another. Tables are left out, because almost everything writes to the log and that makes everything look connected.</p>
+
+<div class="answer">
+  <p><strong>Thirteen independent pieces, and really five families.</strong> Taken literally, the call graph splits into 13 components: one block of 29 and twelve procedures that neither call anything nor are called.</p>
+  <p>That block of 29 is held together by one object. Nine of the eleven arrows that cross between families are just <code>-&gt; CSPStreamLogger</code>. Set the logger aside and the block falls into <strong>20 pieces</strong>, which is the honest picture: the engine is one tight cluster of 19, and almost everything else stands alone.</p>
+  <p>Nothing here is unreachable by accident. The four families outside the engine are entered from somewhere the harness cannot see: a graph node's own SQL, or a person at a query window. <strong>Content file intake is the exception</strong> — those two procedures share no object with anything else, not even the log, and would lift out whole.</p>
+</div>
+
+<p class="eyebrow">Who calls whom</p>
+<div class="rail">
+  <div class="seg" role="group" aria-label="Which families to show">
+    <button data-f="all" aria-pressed="true">All five</button>
+    <button data-f="engine" aria-pressed="false">Engine only</button>
+    <button data-f="cross" aria-pressed="false">Crossings only</button>
+  </div>
+  <div class="seg"><button id="clear" aria-pressed="false">Clear selection</button></div>
+</div>
+
+<div class="canvas"><svg id="svg" role="img" aria-label="Call graph of the harness procedures and functions, grouped into five families"></svg></div>
+<p class="legend">
+  <span><i class="l1"></i>execution engine</span>
+  <span><i class="l2"></i>node utilities</span>
+  <span><i class="l3"></i>graph authoring</span>
+  <span><i class="l4"></i>metrics</span>
+  <span><i class="l5"></i>content intake</span>
+  <span><i class="l6"></i>calls nothing, called by nothing</span>
+</p>
+<div class="detail" id="detail"></div>
+
+<div class="block">
+  <p class="eyebrow">The twelve that stand completely alone</p>
+  <h2>Isolated procedures</h2>
+  <div class="tablewrap"><table id="iso"><thead><tr><th>Procedure</th><th>Family</th><th>Why it looks orphaned</th></tr></thead><tbody></tbody></table></div>
+</div>
+
+<div class="block">
+  <p class="eyebrow">All 41</p>
+  <h2>Register</h2>
+  <div class="tablewrap"><table id="all"><thead><tr><th>Object</th><th>Family</th><th class="num">Calls</th><th class="num">Called by</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<script id="data" type="application/json">{"nodes":[{"id":"AddContentFileToProcessList","kind":"procedure","family":"content","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":16,"y":666},{"id":"CSPAcceptContentFile","kind":"procedure","family":"content","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":268,"y":666},{"id":"CspCloseGraphExecution","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":16,"y":309},{"id":"CspDeleteGraph","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":16,"y":428},{"id":"CSPExecGraphFinalise","kind":"procedure","family":"engine","depth":1,"provenance":"exact","calls":["CSPManageGraphExecution","CSPManageMasterGraph","CSPStreamLogger"],"calledBy":["CSPExecGraphNodeTypeGraph","CSPExecuteGenericGraph","CSPExecuteSingleItem"],"x":268,"y":50},{"id":"CSPExecGraphNodeTypeGraph","kind":"procedure","family":"engine","depth":0,"provenance":"exact","calls":["CSPExecGraphFinalise","CSPExecGraphPrep","CSPGraphExec","CSPRemoveExecutionParameters","CSPSetExecutionParameters","CSPStreamLogger"],"calledBy":["CSPGraphExec"],"x":16,"y":50},{"id":"CSPExecGraphNodeTypeSQL","kind":"procedure","family":"engine","depth":2,"provenance":"exact","calls":["CSPRemoveExecutionParameters","CSPSetExecutionParameters","CSPStoreExecutionString","CSPStreamLogger","CSPSubstituteParams"],"calledBy":["CSPGraphExec"],"x":520,"y":50},{"id":"CSPExecGraphPrep","kind":"procedure","family":"engine","depth":1,"provenance":"exact","calls":["CSPManageGraphExecution","CSPManageMasterGraph"],"calledBy":["CSPExecGraphNodeTypeGraph","CSPExecuteGenericGraph","CSPExecuteSingleItem"],"x":268,"y":85},{"id":"CSPExecGraphProgress","kind":"procedure","family":"engine","depth":2,"provenance":"exact","calls":[],"calledBy":["CSPGraphExec"],"x":520,"y":85},{"id":"CSPExecuteGenericGraph","kind":"procedure","family":"engine","depth":0,"provenance":"exact","calls":["CSPExecGraphFinalise","CSPExecGraphPrep","CSPGraphExec","GetCurrentGraphExecutionId"],"calledBy":[],"x":16,"y":85},{"id":"CSPExecuteSingleItem","kind":"procedure","family":"engine","depth":0,"provenance":"exact","calls":["CSPExecGraphFinalise","CSPExecGraphPrep","CSPGraphExec","CSPStreamLogger"],"calledBy":[],"x":16,"y":120},{"id":"cspGetFailedLCLTRecordsByGraphId","kind":"function","family":"metrics","depth":1,"provenance":"reconstructed","calls":[],"calledBy":["CspLcTestProcessor"],"x":16,"y":547},{"id":"CSPGetNextTempGraphid","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":268,"y":428},{"id":"CSPGetNextTempGraphNodeid","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":520,"y":428},{"id":"CSPGraphExec","kind":"procedure","family":"engine","depth":1,"provenance":"exact","calls":["CSPExecGraphNodeTypeGraph","CSPExecGraphNodeTypeSQL","CSPExecGraphProgress","CSPStreamLogger"],"calledBy":["CSPExecGraphNodeTypeGraph","CSPExecuteGenericGraph","CSPExecuteSingleItem"],"x":268,"y":120},{"id":"CspInsertScheduledGraphSegment","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":772,"y":428},{"id":"CSPInsertScheduledItemString","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":1024,"y":428},{"id":"CspLcTestProcessor","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":["cspGetFailedLCLTRecordsByGraphId","CSPStreamLogger"],"calledBy":[],"x":268,"y":547},{"id":"CSPLoadMetaData","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":268,"y":309},{"id":"CspLtTestProcessor","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":520,"y":547},{"id":"CSPManageGraphExecution","kind":"procedure","family":"engine","depth":2,"provenance":"exact","calls":["CSPSetGraphExecutionStatus","CSPStartNewGraphExecution","GetCurrentGraphExecutionId","GetGraphExecutionStatus"],"calledBy":["CSPExecGraphFinalise","CSPExecGraphPrep"],"x":520,"y":120},{"id":"CSPManageMasterGraph","kind":"procedure","family":"engine","depth":2,"provenance":"exact","calls":["CSPStreamLogger","GetGraphExecutionStatus"],"calledBy":["CSPExecGraphFinalise","CSPExecGraphPrep"],"x":520,"y":155},{"id":"CSPRemoveExecutionParameters","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":["CSPExecGraphNodeTypeGraph","CSPExecGraphNodeTypeSQL"],"x":772,"y":50},{"id":"CSPSetExecutionParameters","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":["CSPExecGraphNodeTypeGraph","CSPExecGraphNodeTypeSQL"],"x":772,"y":85},{"id":"CspSetExportTable","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":520,"y":309},{"id":"CSPSetGraphExecutionStatus","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":["GetCurrentGraphExecutionId"],"calledBy":["CSPManageGraphExecution"],"x":772,"y":120},{"id":"CSPStartNewGraphExecution","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":["GetGraphExecutionStatus"],"calledBy":["CSPManageGraphExecution"],"x":772,"y":155},{"id":"CspStopProcessing","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":772,"y":309},{"id":"CSPStoreExecutionString","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":[],"calledBy":["CSPExecGraphNodeTypeSQL","CSPTableCopy","CSPValidateSourceRecords"],"x":772,"y":190},{"id":"CSPStreamLogger","kind":"procedure","family":"engine","depth":4,"provenance":"exact","calls":[],"calledBy":["CspCloseGraphExecution","CSPExecGraphFinalise","CSPExecGraphNodeTypeGraph","CSPExecGraphNodeTypeSQL","CSPExecuteSingleItem","CSPGraphExec","CspLcTestProcessor","CSPLoadMetaData","CspLtTestProcessor","CSPManageMasterGraph","CSPRemoveExecutionParameters","CSPSetExecutionParameters","CspSetExportTable","CspStopProcessing","CSPSubstituteParams","CSPTableCopy","CSPTruncateTable","CSPValidateSourceRecords"],"x":1024,"y":50},{"id":"CSPSubstituteParams","kind":"procedure","family":"engine","depth":3,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":["CSPExecGraphNodeTypeSQL"],"x":772,"y":225},{"id":"CSPTableCopy","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStoreExecutionString","CSPStreamLogger"],"calledBy":[],"x":1024,"y":309},{"id":"CSPTruncateTable","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStreamLogger"],"calledBy":[],"x":16,"y":344},{"id":"CSPUpdateScheduledItemString","kind":"procedure","family":"authoring","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":16,"y":463},{"id":"CSPValidateSourceRecords","kind":"procedure","family":"utility","depth":0,"provenance":"exact","calls":["CSPStoreExecutionString","CSPStreamLogger"],"calledBy":[],"x":268,"y":344},{"id":"DeleteCspLogStreamMetricMeasure","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":772,"y":547},{"id":"GetCurrentGraphExecutionId","kind":"function","family":"engine","depth":4,"provenance":"exact","calls":[],"calledBy":["CSPExecuteGenericGraph","CSPManageGraphExecution","CSPSetGraphExecutionStatus"],"x":1024,"y":85},{"id":"GetGraphExecutionStatus","kind":"function","family":"engine","depth":4,"provenance":"exact","calls":[],"calledBy":["CSPManageGraphExecution","CSPManageMasterGraph","CSPStartNewGraphExecution"],"x":1024,"y":120},{"id":"InsertCspLogStreamMetric","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":1024,"y":547},{"id":"InsertCspLogStreamMetricMeasure","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":16,"y":582},{"id":"UpdateCspLogStreamMetric","kind":"procedure","family":"metrics","depth":0,"provenance":"exact","calls":[],"calledBy":[],"x":268,"y":582}],"edges":[{"from":"CspCloseGraphExecution","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPExecGraphFinalise","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPExecGraphFinalise","to":"CSPManageGraphExecution","kind":"exec"},{"from":"CSPExecGraphFinalise","to":"CSPManageMasterGraph","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPRemoveExecutionParameters","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPSetExecutionParameters","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPExecGraphPrep","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPGraphExec","kind":"exec"},{"from":"CSPExecGraphNodeTypeGraph","to":"CSPExecGraphFinalise","kind":"exec"},{"from":"CSPExecGraphNodeTypeSQL","to":"CSPRemoveExecutionParameters","kind":"exec"},{"from":"CSPExecGraphNodeTypeSQL","to":"CSPSetExecutionParameters","kind":"exec"},{"from":"CSPExecGraphNodeTypeSQL","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPExecGraphNodeTypeSQL","to":"CSPSubstituteParams","kind":"exec"},{"from":"CSPExecGraphNodeTypeSQL","to":"CSPStoreExecutionString","kind":"exec"},{"from":"CSPExecGraphPrep","to":"CSPManageGraphExecution","kind":"exec"},{"from":"CSPExecGraphPrep","to":"CSPManageMasterGraph","kind":"exec"},{"from":"CSPExecuteGenericGraph","to":"CSPExecGraphPrep","kind":"exec"},{"from":"CSPExecuteGenericGraph","to":"CSPGraphExec","kind":"exec"},{"from":"CSPExecuteGenericGraph","to":"CSPExecGraphFinalise","kind":"exec"},{"from":"CSPExecuteGenericGraph","to":"GetCurrentGraphExecutionId","kind":"call"},{"from":"CSPExecuteSingleItem","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPExecuteSingleItem","to":"CSPExecGraphPrep","kind":"exec"},{"from":"CSPExecuteSingleItem","to":"CSPGraphExec","kind":"exec"},{"from":"CSPExecuteSingleItem","to":"CSPExecGraphFinalise","kind":"exec"},{"from":"CSPGraphExec","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPGraphExec","to":"CSPExecGraphNodeTypeGraph","kind":"exec"},{"from":"CSPGraphExec","to":"CSPExecGraphNodeTypeSQL","kind":"exec"},{"from":"CSPGraphExec","to":"CSPExecGraphProgress","kind":"exec"},{"from":"CspLcTestProcessor","to":"CSPStreamLogger","kind":"exec"},{"from":"CspLcTestProcessor","to":"cspGetFailedLCLTRecordsByGraphId","kind":"call"},{"from":"CSPLoadMetaData","to":"CSPStreamLogger","kind":"exec"},{"from":"CspLtTestProcessor","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPManageGraphExecution","to":"CSPStartNewGraphExecution","kind":"exec"},{"from":"CSPManageGraphExecution","to":"CSPSetGraphExecutionStatus","kind":"exec"},{"from":"CSPManageGraphExecution","to":"GetGraphExecutionStatus","kind":"call"},{"from":"CSPManageGraphExecution","to":"GetCurrentGraphExecutionId","kind":"call"},{"from":"CSPManageMasterGraph","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPManageMasterGraph","to":"GetGraphExecutionStatus","kind":"call"},{"from":"CSPRemoveExecutionParameters","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPSetExecutionParameters","to":"CSPStreamLogger","kind":"exec"},{"from":"CspSetExportTable","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPSetGraphExecutionStatus","to":"GetCurrentGraphExecutionId","kind":"call"},{"from":"CSPStartNewGraphExecution","to":"GetGraphExecutionStatus","kind":"call"},{"from":"CspStopProcessing","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPSubstituteParams","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPTableCopy","to":"CSPStoreExecutionString","kind":"exec"},{"from":"CSPTableCopy","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPTruncateTable","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPValidateSourceRecords","to":"CSPStreamLogger","kind":"exec"},{"from":"CSPValidateSourceRecords","to":"CSPStoreExecutionString","kind":"exec"}],"bands":[{"key":"engine","title":"Execution engine","blurb":"What CSPExecuteGenericGraph reaches. Laid out left to right by call depth.","y":16,"h":247,"count":19},{"key":"utility","title":"Node utilities","blurb":"Called from a graph node\u2019s own SQL, never from inside the harness.","y":275,"h":107,"count":7},{"key":"authoring","title":"Graph authoring","blurb":"Tools for building and editing graphs by hand.","y":394,"h":107,"count":6},{"key":"metrics","title":"LC and LT metrics","blurb":"The comparison subsystem. Nothing on the execution path calls it.","y":513,"h":107,"count":7},{"key":"content","title":"Content file intake","blurb":"Touches nothing else in the harness, not even the log.","y":632,"h":72,"count":2}],"W":1248,"H":722,"NW":208,"NH":24}</script>
+<script>
+(function(){
+"use strict";
+var D=JSON.parse(document.getElementById('data').textContent);
+var NODES=D.nodes, EDGES=D.edges, by={};
+NODES.forEach(function(n){by[n.id]=n;});
+var NS='http://www.w3.org/2000/svg';
+function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+var svg=document.getElementById('svg');
+svg.setAttribute('viewBox','0 0 '+D.W+' '+D.H);
+svg.setAttribute('width',D.W); svg.setAttribute('height',D.H);
+
+var defs=el('defs',{});
+var mk=el('marker',{id:'a',viewBox:'0 0 8 8',refX:'7',refY:'4',markerWidth:'6',markerHeight:'6',orient:'auto-start-reverse'});
+mk.appendChild(el('path',{d:'M0 0L8 4L0 8z',fill:'var(--arrow)'}));
+defs.appendChild(mk); svg.appendChild(defs);
+
+var gB=el('g',{}), gE=el('g',{}), gN=el('g',{});
+svg.appendChild(gB); svg.appendChild(gE); svg.appendChild(gN);
+
+var bandEls={};
+D.bands.forEach(function(b){
+  var g=el('g',{class:'band'});
+  g.appendChild(el('rect',{class:'bandbg',x:6,y:b.y-8,width:D.W-12,height:b.h,rx:8}));
+  var t=el('text',{class:'bandttl',x:18,y:b.y+8}); t.textContent=b.title+'  ('+b.count+')'; g.appendChild(t);
+  var s=el('text',{class:'bandsub',x:18,y:b.y+23}); s.textContent=b.blurb; g.appendChild(s);
+  gB.appendChild(g); bandEls[b.key]=g;
+});
+
+var NW=D.NW, NH=D.NH, edgeEls=[];
+EDGES.forEach(function(e){
+  var a=by[e.from], b=by[e.to]; if(!a||!b) return;
+  var cross=a.family!==b.family, d;
+  var ax=a.x, ay=a.y+NH/2, bx=b.x, by_=b.y+NH/2;
+  if(Math.abs(ay-by_)<1 && bx>ax){ d='M'+(ax+NW)+' '+ay+'L'+(bx-2)+' '+by_; }
+  else if(bx>ax+NW-1){
+    var dx=Math.max(16,(bx-ax-NW)*0.5);
+    d='M'+(ax+NW)+' '+ay+'C'+(ax+NW+dx)+' '+ay+' '+(bx-dx)+' '+by_+' '+(bx-2)+' '+by_;
+  } else {
+    var off=Math.min(60,30+Math.abs(by_-ay)*0.18);
+    d='M'+ax+' '+ay+'C'+(ax-off)+' '+ay+' '+(bx-off)+' '+by_+' '+(bx-2)+' '+by_;
+  }
+  var p=el('path',{d:d,class:'e'+(cross?' cross':'')});
+  p.__e=e; p.__cross=cross; gE.appendChild(p); edgeEls.push(p);
+});
+
+var nodeEls={};
+NODES.forEach(function(n){
+  var iso = n.calls.length===0 && n.calledBy.length===0;
+  var g=el('g',{class:'n f-'+n.family+(iso?' iso':''),tabindex:'0',role:'button'});
+  g.appendChild(el('rect',{x:n.x,y:n.y,width:NW,height:NH}));
+  var t=el('text',{x:n.x+8,y:n.y+NH/2});
+  t.textContent = n.id.length>33 ? n.id.slice(0,32)+'…' : n.id;
+  g.appendChild(t);
+  var ttl=el('title',{}); ttl.textContent=n.id; g.appendChild(ttl);
+  g.addEventListener('click',function(){select(n.id);});
+  g.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();select(n.id);}});
+  gN.appendChild(g); nodeEls[n.id]=g;
+});
+
+var filter='all', sel=null;
+function render(){
+  edgeEls.forEach(function(p){
+    var vis = filter==='all' ? true
+            : filter==='cross' ? p.__cross
+            : (by[p.__e.from].family==='engine' && by[p.__e.to].family==='engine');
+    p.classList.toggle('hide',!vis);
+  });
+  NODES.forEach(function(n){
+    var vis = filter==='all' ? true
+            : filter==='engine' ? n.family==='engine'
+            : (n.calls.concat(n.calledBy).some(function(o){return by[o].family!==n.family;}));
+    nodeEls[n.id].classList.toggle('hide',!vis);
+  });
+  D.bands.forEach(function(b){
+    bandEls[b.key].classList.toggle('hide', filter==='engine' && b.key!=='engine');
+  });
+  var on={};
+  if(sel){
+    on[sel]=1;
+    edgeEls.forEach(function(p){
+      var hit=(p.__e.from===sel||p.__e.to===sel)&&!p.classList.contains('hide');
+      p.classList.toggle('on',hit); if(hit){on[p.__e.from]=1;on[p.__e.to]=1;}
+    });
+  } else edgeEls.forEach(function(p){p.classList.remove('on');});
+  svg.parentNode.classList.toggle('dim',!!sel);
+  NODES.forEach(function(n){
+    nodeEls[n.id].classList.toggle('on',!!on[n.id]);
+    nodeEls[n.id].classList.toggle('sel',n.id===sel);
+  });
+}
+var FAMNAME={engine:'execution engine',utility:'node utility',authoring:'graph authoring',
+             metrics:'metrics',content:'content file intake'};
+var detail=document.getElementById('detail');
+function chip(id){var b=document.createElement('button');b.className='chip';b.textContent=id;
+  b.addEventListener('click',function(){select(id);});return b;}
+function group(t,ids){
+  var s=document.createElement('section');
+  var h=document.createElement('h4'); h.textContent=t+' ('+ids.length+')'; s.appendChild(h);
+  if(!ids.length){var p=document.createElement('p');p.className='none';p.textContent='none';s.appendChild(p);}
+  else{var ul=document.createElement('ul');ids.forEach(function(i){var li=document.createElement('li');li.appendChild(chip(i));ul.appendChild(li);});s.appendChild(ul);}
+  return s;
+}
+function select(id){ sel=(sel===id)?null:id; render(); show();
+  if(sel&&nodeEls[sel]) nodeEls[sel].scrollIntoView({block:'nearest',inline:'center'}); }
+function show(){
+  detail.textContent='';
+  if(!sel){
+    var h=document.createElement('h3'); h.textContent='Nothing selected';
+    var m=document.createElement('p'); m.className='meta';
+    m.textContent='Select an object in the diagram or a row below to see its callers and callees.';
+    detail.appendChild(h); detail.appendChild(m); return;
+  }
+  var n=by[sel];
+  var h3=document.createElement('h3'); h3.textContent='ops.'+n.id; detail.appendChild(h3);
+  var m=document.createElement('p'); m.className='meta';
+  m.textContent=n.kind+' — '+FAMNAME[n.family]
+    + (n.family==='engine' ? ' — call depth '+n.depth+' from CSPExecuteGenericGraph' : '')
+    + (n.calls.length===0&&n.calledBy.length===0 ? ' — calls nothing, nothing calls it' : '');
+  detail.appendChild(m);
+  var w=document.createElement('div'); w.className='refs';
+  w.appendChild(group('calls',n.calls));
+  w.appendChild(group('called by',n.calledBy));
+  detail.appendChild(w);
+}
+function tag(f){var s=document.createElement('span');s.className='tag t-'+f;s.textContent=FAMNAME[f];return s;}
+var WHY={
+ CSPInsertScheduledItemString:'run by hand to register a new node’s SQL',
+ CSPUpdateScheduledItemString:'run by hand to version a node’s SQL',
+ CspInsertScheduledGraphSegment:'run by hand to wire two nodes together',
+ CspDeleteGraph:'run by hand to remove a graph',
+ CSPGetNextTempGraphid:'used by the ad hoc graph path, which nothing here enters',
+ CSPGetNextTempGraphNodeid:'used by the ad hoc graph path, which nothing here enters',
+ InsertCspLogStreamMetric:'metric registration, run by hand',
+ UpdateCspLogStreamMetric:'metric registration, run by hand',
+ InsertCspLogStreamMetricMeasure:'metric registration, run by hand',
+ DeleteCspLogStreamMetricMeasure:'metric registration, run by hand',
+ AddContentFileToProcessList:'content intake, shares nothing with the rest',
+ CSPAcceptContentFile:'content intake, shares nothing with the rest'};
+var isoBody=document.querySelector('#iso tbody');
+NODES.filter(function(n){return n.calls.length===0&&n.calledBy.length===0;})
+  .sort(function(a,b){return a.family.localeCompare(b.family)||a.id.toLowerCase().localeCompare(b.id.toLowerCase());})
+  .forEach(function(n){
+    var tr=document.createElement('tr');
+    var td1=document.createElement('td'); td1.className='name'; td1.textContent=n.id; tr.appendChild(td1);
+    var td2=document.createElement('td'); td2.appendChild(tag(n.family)); tr.appendChild(td2);
+    var td3=document.createElement('td'); td3.textContent=WHY[n.id]||''; tr.appendChild(td3);
+    tr.addEventListener('click',function(){select(n.id);
+      document.querySelector('.canvas').scrollIntoView({behavior:'smooth',block:'center'});});
+    isoBody.appendChild(tr);
+  });
+var allBody=document.querySelector('#all tbody');
+var ORD={engine:0,utility:1,authoring:2,metrics:3,content:4};
+NODES.slice().sort(function(a,b){return ORD[a.family]-ORD[b.family]||a.depth-b.depth
+  ||a.id.toLowerCase().localeCompare(b.id.toLowerCase());}).forEach(function(n){
+  var tr=document.createElement('tr');
+  var t1=document.createElement('td'); t1.className='name'; t1.textContent=n.id; tr.appendChild(t1);
+  var t2=document.createElement('td'); t2.appendChild(tag(n.family)); tr.appendChild(t2);
+  var t3=document.createElement('td'); t3.className='num'; t3.textContent=n.calls.length; tr.appendChild(t3);
+  var t4=document.createElement('td'); t4.className='num'; t4.textContent=n.calledBy.length; tr.appendChild(t4);
+  tr.addEventListener('click',function(){select(n.id);
+    document.querySelector('.canvas').scrollIntoView({behavior:'smooth',block:'center'});});
+  allBody.appendChild(tr);
+});
+Array.prototype.forEach.call(document.querySelectorAll('[data-f]'),function(b){
+  b.addEventListener('click',function(){
+    filter=b.getAttribute('data-f');
+    Array.prototype.forEach.call(document.querySelectorAll('[data-f]'),function(o){
+      o.setAttribute('aria-pressed',String(o===b));});
+    render();
+  });
+});
+document.getElementById('clear').addEventListener('click',function(){sel=null;render();show();});
+render(); show();
+})();
+</script>
+
+</body>
+</html>
