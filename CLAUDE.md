@@ -9,7 +9,7 @@ Working copies of Microsoft Fabric notebooks (PySpark / Spark SQL) and Fabric wa
 `.ipynb` files are large single-line JSON. To read one, extract the cells with node rather than reading the raw file:
 
 ```
-node -e "const nb=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));nb.cells.forEach((c,i)=>console.log('--- ['+i+'] '+c.cell_type+'\n'+[].concat(c.source).join('')))" "main_v2/ADS_v2_00_Setup.ipynb"
+node -e "const nb=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));nb.cells.forEach((c,i)=>console.log('--- ['+i+'] '+c.cell_type+'\n'+[].concat(c.source).join('')))" "main_v2/EHN_ADS_v2_00_Setup.ipynb"
 ```
 
 ## Layout
@@ -29,9 +29,13 @@ Data flows through these layers: `dlk` / `edw` (client source replicas) and `pii
 
 A fix made only in a notebook here is lost at the next generation (`checks/drift_check.py` lists such cells). If you change SQL in a `main_v2` notebook, say so and point out that the YAML has to change too.
 
+The ADS notebooks are kept twice, identical except for names: an `EHN_` set (`EHN_ADS_v2_10_Common`, ...), which cannot be confused in Fabric with the generated copies already in Dev_CGP, and an unprefixed set (`ADS_v2_10_Common`, ...). Each set is self-contained: its build notebooks `%run` its own setup and its runner starts its own names. Make any change in both sets.
+
+The ADS build notebooks `%run` their setup (`%%pyspark` / `%run EHN_ADS_v2_00_Setup` or `ADS_v2_00_Setup`, cell 2), which works when a notebook is run on its own or from a pipeline Notebook activity. Under `runMultiple` (`EHN_ADS_v2_Run` / `ADS_v2_Run`), `%run` fails in these notebooks: they default to Spark SQL, so a bare `%run` cell is parsed as SQL, and under `%%pyspark` it reaches IPython's file `%run` ("File not found"). The ODS notebooks use `%run ODS_v2_00_Setup` and have the same problem under `ODS_v2_Run`.
+
 **Notebook pattern**, the same in every build notebook:
 1. A parameters cell (`batch_id`, and for ODS `source_set`).
-2. `%run ODS_v2_00_Setup` / `%run ADS_v2_00_Setup`. Setup sets Spark conf variables (`ods.target`, `ods.stg`, `ods.cutoff_date`, `ods.batch_id`, `ods.dlk`/`ods.edw`/... for ODS; `ads.target`, `ads.ods`, `ads.stg`, `ads.start_time`, `ads.end_time`, `ads.effective_date` for ADS). It also registers the hash/redact UDFs (`ods_hash_email`, `ods_hash_phone`, `ods_hash_id`, `ods_eircode_area`, `ods_redact`) and the run log helper.
+2. `%run ODS_v2_00_Setup` (ODS) / `%run EHN_ADS_v2_00_Setup` or `ADS_v2_00_Setup` (ADS). Setup sets Spark conf variables (`ods.target`, `ods.stg`, `ods.cutoff_date`, `ods.batch_id`, `ods.dlk`/`ods.edw`/... for ODS; `ads.target`, `ads.ods`, `ads.stg`, `ads.start_time`, `ads.end_time`, `ads.effective_date` for ADS). It also registers the hash/redact UDFs (`ods_hash_email`, `ods_hash_phone`, `ods_hash_id`, `ods_eircode_area`, `ods_redact`) and the run log helper.
 3. A start log, then one SQL statement per cell. SQL refers to schemas and windows only through `${ods.*}` / `${ads.*}` substitution.
 4. A final checks cell: unique non-null business key, distinct surrogate key, no PII-named columns, no email/mobile values in text. It writes to `OdsBuildLog` / `AdsBuildLog` and fails the notebook on any failure.
 
@@ -39,7 +43,7 @@ A fix made only in a notebook here is lost at the next generation (`checks/drift
 
 **Run order.**
 - ODS: `10_Policy` → `20_Quote` → `21`–`24`, `30_Interaction` in parallel; `40_Reference` can run at any point. `ODS_v2_Run` holds the DAG and resumes a failed batch by skipping notebooks already `succeeded` in `OdsRunLog`. Notebook-launched orchestration (`runMultiple` / `notebook.run`) fails in Fabric, though, so in practice the notebooks run one at a time, by hand or as jobs.
-- ADS: `10_Common` (shared tables: active sales, Relay documents, renewal cycles, re-quotes, HFQ prices/payments) → `11`–`14` (Motor and Home acquisition and renewal families) → `19_EventStream`. `19_EventStream` unions every family into `ads_v2.EventStream`, one row per `EventId`, and writes per-family output tests to `ads_v2.AdsFamilyCheck`.
+- ADS: `10_Common` (shared tables: active sales, Relay documents, renewal cycles, re-quotes, HFQ prices/payments, contact / SCV links, call attribution, Motor and Home cancellations) → `11`–`18` (event families by product and journey, in parallel; `18_Travel` needs nothing from 10) → `19_EventStream` → `20_ScvAttach` → `21_EpisodeNumbering` and `22_Parity`; `23_CampaignHistory` needs only 10. `19_EventStream` unions every family into `ads_v2.EventStream`, one row per `EventId`, and writes per-family output tests to `ads_v2.AdsFamilyCheck`. `EHN_ADS_v2_Run` and `ADS_v2_Run` run this DAG the way `ODS_v2_Run` does (resume by `batch_id` from `AdsRunLog`; `only` runs a subset).
 
 **Key conventions:**
 - `EventId = xxhash64(code, grain, references, minute)`, stable across runs. Duplicates from a repeated source row collapse in the union.
