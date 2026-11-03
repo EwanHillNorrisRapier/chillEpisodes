@@ -9,8 +9,8 @@
     INFORMATION_SCHEMA. Read only. The endpoint's metadata can lag a minute or two behind a table that was
     just rebuilt in Spark; if a result looks stale, wait and run it again.
 
-    What it checks (1501 expected columns, 55 tables):
-      - every output column of the 53 ods_v2 tables, taken from the ODS build notebooks
+    What it checks (1564 expected columns, 57 tables):
+      - every output column of the 56 ods_v2 tables, taken from the ODS build notebooks
         (ODS_v2_10 ... ODS_v2_40)
       - the columns the EHN ADS notebooks read from ods_v2 and ods.scveadmlinkfinal (alias.column references;
         a column read without a table alias is covered by the ODS list above, not marked as read by ADS)
@@ -22,7 +22,7 @@
       4  extra column, not in the notebooks    the table was built from different (newer or older) config
     No rows = every table matches the notebooks.
 
-    Generated on 2026-10-21 from the notebooks in main_v2. If the ODS or ADS notebooks
+    Generated on 2026-11-02 from the notebooks in main_v2. If the ODS or ADS notebooks
     change, the expected list here goes stale: regenerate it rather than editing it by hand.
 */
 with expected as (
@@ -453,6 +453,10 @@ with expected as (
         ('ods_v2', 'PolicyHome', 'PolicyId', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyHome', 'PolicyCode', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyHome', 'RecordVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyHome', 'IsLatestVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyHome', 'RecordVersionIsLatest', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyHome', 'RecordDateTimeStart', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyHome', 'RecordDateTimeEnd', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyHome', 'HomeFirstTimeBuyerFlag', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyHome', 'HomeNCDYears', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyHome', 'HomeNCDYearsGranted', 'ODS_v2_10_Policy', ''),
@@ -501,6 +505,27 @@ with expected as (
         ('ods_v2', 'PolicyHomeQsEvent', 'BrokerCompany', 'ODS_v2_22_Quote_Home', ''),
         ('ods_v2', 'PolicyHomeQsEvent', 'AgencyName', 'ODS_v2_22_Quote_Home', ''),
         ('ods_v2', 'PolicyHomeQsEvent', 'ExtractDateTime', 'ODS_v2_22_Quote_Home', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'OdsBatchId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'OdsLoadDateTime', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'LoanReference', 'ODS_v2_11_Policy_Loan', '15_Motor_InLife'),
+        ('ods_v2', 'PolicyLoanStatus', 'PolicyId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'PolicyCode', 'ODS_v2_11_Policy_Loan', '15_Motor_InLife'),
+        ('ods_v2', 'PolicyLoanStatus', 'ClientCode', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'LoanStatusId', 'ODS_v2_11_Policy_Loan', '15_Motor_InLife'),
+        ('ods_v2', 'PolicyLoanStatus', 'PreviousLoanStatusId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'StatusFromDate', 'ODS_v2_11_Policy_Loan', '15_Motor_InLife'),
+        ('ods_v2', 'PolicyLoanStatus', 'LastSeenDate', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'StatusToDate', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'SnapshotDays', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'BranchId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'Premium', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'CreditCharge', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'ReceivedDate', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'InceptionDate', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'PolicyStatusId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'LoanMappingStatusId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'LoanStatusForUnauthorisedId', 'ODS_v2_11_Policy_Loan', ''),
+        ('ods_v2', 'PolicyLoanStatus', 'LoanStatusForCancellationId', 'ODS_v2_11_Policy_Loan', ''),
         ('ods_v2', 'PolicyMonthEnd', 'OdsBatchId', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMonthEnd', 'OdsLoadDateTime', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMonthEnd', 'PolicyId', 'ODS_v2_10_Policy', '10_Common, 16_Home_InLife'),
@@ -555,6 +580,10 @@ with expected as (
         ('ods_v2', 'PolicyMotorProposer', 'PolicyId', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorProposer', 'PolicyCode', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorProposer', 'RecordVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorProposer', 'IsLatestVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorProposer', 'RecordVersionIsLatest', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorProposer', 'RecordDateTimeStart', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorProposer', 'RecordDateTimeEnd', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorProposer', 'ProposerResidentSinceDate', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorProposer', 'ProposerLicenceTypeDesc', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorProposer', 'ProposerLicenceIssueCountry', 'ODS_v2_10_Policy', ''),
@@ -577,6 +606,10 @@ with expected as (
         ('ods_v2', 'PolicyMotorVehicle', 'PolicyId', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorVehicle', 'PolicyCode', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorVehicle', 'RecordVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorVehicle', 'IsLatestVersion', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorVehicle', 'RecordVersionIsLatest', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorVehicle', 'RecordDateTimeStart', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMotorVehicle', 'RecordDateTimeEnd', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorVehicle', 'VehicleManufacturer', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorVehicle', 'VehicleModel', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMotorVehicle', 'VehicleManufacturedYearFrom', 'ODS_v2_10_Policy', ''),
@@ -644,6 +677,15 @@ with expected as (
         ('ods_v2', 'PolicyMta', 'AmendConvictionsOther', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMta', 'ChangeOfAdditionalDriverDetails', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyMta', 'Amend2ndCarDiscount', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'OdsBatchId', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'OdsLoadDateTime', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'PolicyId', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'PolicyCode', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'WorkDate', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'MtaPostings', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'MTAGrossNum', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'EURGrossPremMTA', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyMtaDay', 'EURFeesMTA', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyQuoteLink', 'OdsBatchId', 'ODS_v2_20_Quote', ''),
         ('ods_v2', 'PolicyQuoteLink', 'OdsLoadDateTime', 'ODS_v2_20_Quote', ''),
         ('ods_v2', 'PolicyQuoteLink', 'QuoteEventID', 'ODS_v2_20_Quote', ''),
@@ -741,6 +783,19 @@ with expected as (
         ('ods_v2', 'PolicyRenewal', 'ClientTenure', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyRenewal', 'ProductTenure', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyRenewal', 'EdwCreateDate', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'RenEURInviteChgExFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'RenEURInviteChgIncFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'RenEUROfferChgExFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'RenEUROfferChgIncFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'TYRetGWPChgExFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'TYRetGWPChgIncFee', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'GWPYoYCustChg', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'GWPYoYCustPct', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'GWPYoYInsurerChg', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'GWPYoYInsurerPct', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'PriceIncrease', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'PriceIncreasePC', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicyRenewal', 'PriceIncreaseOffer', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'OdsBatchId', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'OdsLoadDateTime', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'PolicyId', 'ODS_v2_10_Policy', ''),
@@ -774,7 +829,10 @@ with expected as (
         ('ods_v2', 'PolicySale', 'QuoteQueryGuid', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'Channel', 'ODS_v2_10_Policy', '10_Common'),
         ('ods_v2', 'PolicySale', 'SubChannel', 'ODS_v2_10_Policy', ''),
-        ('ods_v2', 'PolicySale', 'ChannelCall', 'ODS_v2_10_Policy', ''),
+        ('ods_v2', 'PolicySale', 'ChannelCall', 'ODS_v2_10_Policy', '')
+    ) v (TableSchema, TableName, ColumnName, BuiltBy, ReadByAds)
+    union all
+    select * from (values
         ('ods_v2', 'PolicySale', 'ChannelWeb', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'ChannelXSell', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicySale', 'ChannelOnLine', 'ODS_v2_10_Policy', ''),
@@ -829,10 +887,7 @@ with expected as (
         ('ods_v2', 'PolicyTransaction', 'ClientDiscount', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyTransaction', 'AnnualPremium', 'ODS_v2_10_Policy', ''),
         ('ods_v2', 'PolicyTransaction', 'InsurerTransType', 'ODS_v2_10_Policy', '15_Motor_InLife, 16_Home_InLife, 17_Van'),
-        ('ods_v2', 'PolicyTransaction', 'InsurerStatus', 'ODS_v2_10_Policy', '15_Motor_InLife, 16_Home_InLife, 17_Van')
-    ) v (TableSchema, TableName, ColumnName, BuiltBy, ReadByAds)
-    union all
-    select * from (values
+        ('ods_v2', 'PolicyTransaction', 'InsurerStatus', 'ODS_v2_10_Policy', '15_Motor_InLife, 16_Home_InLife, 17_Van'),
         ('ods_v2', 'PolicyTransaction', 'InsurerInitialNetPremium', 'ODS_v2_10_Policy', '15_Motor_InLife, 16_Home_InLife, 17_Van'),
         ('ods_v2', 'PolicyTransaction', 'InsurerInitialCommission', 'ODS_v2_10_Policy', '15_Motor_InLife, 16_Home_InLife, 17_Van'),
         ('ods_v2', 'PolicyTransaction', 'ConfirmedProvisional', 'ODS_v2_10_Policy', ''),
@@ -1177,7 +1232,10 @@ with expected as (
         ('ods_v2', 'QuoteMotorDriver', 'DriverPenaltyPoints', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorDriver', 'DriverOccupation', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorDriver', 'DriverFullTimeEmployersBusiness', 'ODS_v2_21_Quote_Motor', ''),
-        ('ods_v2', 'QuoteMotorDriver', 'DriverEmploymentType', 'ODS_v2_21_Quote_Motor', ''),
+        ('ods_v2', 'QuoteMotorDriver', 'DriverEmploymentType', 'ODS_v2_21_Quote_Motor', '')
+    ) v (TableSchema, TableName, ColumnName, BuiltBy, ReadByAds)
+    union all
+    select * from (values
         ('ods_v2', 'QuoteMotorPayment', 'OdsBatchId', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorPayment', 'OdsLoadDateTime', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorPayment', 'QuoteId', 'ODS_v2_21_Quote_Motor', ''),
@@ -1209,6 +1267,18 @@ with expected as (
         ('ods_v2', 'QuoteMotorPrice', 'Fee', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorPrice', 'Premium', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorPrice', 'QuoteSummaryId', 'ODS_v2_21_Quote_Motor', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'OdsBatchId', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'OdsLoadDateTime', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'QuoteQueryId', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'QuoteId', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'GuidKey', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'CreatedDateTimeUtc', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'StepId', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'ProposerQuoteDriverId', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'RetrievedGuidKey', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'RetrievalCount', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'CoverCode', 'ODS_v2_25_Quote_Motor_Query', ''),
+        ('ods_v2', 'QuoteMotorQuery', 'CoverVoluntaryExcess', 'ODS_v2_25_Quote_Motor_Query', ''),
         ('ods_v2', 'QuoteMotorStep', 'OdsBatchId', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorStep', 'OdsLoadDateTime', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorStep', 'ClientStepId', 'ODS_v2_21_Quote_Motor', ''),
@@ -1232,10 +1302,7 @@ with expected as (
         ('ods_v2', 'QuoteMotorSummary', 'LastClickFlag', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorSummary', 'FirstDevice', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorSummary', 'LastDevice', 'ODS_v2_21_Quote_Motor', ''),
-        ('ods_v2', 'QuoteMotorSummary', 'FirstMktChannel', 'ODS_v2_21_Quote_Motor', '')
-    ) v (TableSchema, TableName, ColumnName, BuiltBy, ReadByAds)
-    union all
-    select * from (values
+        ('ods_v2', 'QuoteMotorSummary', 'FirstMktChannel', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorSummary', 'LastMktChannel', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorSummary', 'FirstMedium', 'ODS_v2_21_Quote_Motor', ''),
         ('ods_v2', 'QuoteMotorSummary', 'LastMedium', 'ODS_v2_21_Quote_Motor', ''),
@@ -1532,11 +1599,7 @@ with expected as (
         ('ods', 'scveadmlinkfinal', 'PolicyInceptDate', '(SCV link, not built by ODS v2)', '10_Common'),
         ('ods', 'scveadmlinkfinal', 'QuoteStartDate', '(SCV link, not built by ODS v2)', '10_Common'),
         ('ods', 'scveadmlinkfinal', 'SCV_Customer_Key', '(SCV link, not built by ODS v2)', '10_Common'),
-        ('ods', 'scveadmlinkfinal', 'SourceSystemId', '(SCV link, not built by ODS v2)', '10_Common'),
-        ('ods_v2', 'PolicyLoanStatus', 'LoanReference', '(no ODS notebook builds this table)', '15_Motor_InLife'),
-        ('ods_v2', 'PolicyLoanStatus', 'LoanStatusId', '(no ODS notebook builds this table)', '15_Motor_InLife'),
-        ('ods_v2', 'PolicyLoanStatus', 'PolicyCode', '(no ODS notebook builds this table)', '15_Motor_InLife'),
-        ('ods_v2', 'PolicyLoanStatus', 'StatusFromDate', '(no ODS notebook builds this table)', '15_Motor_InLife')
+        ('ods', 'scveadmlinkfinal', 'SourceSystemId', '(SCV link, not built by ODS v2)', '10_Common')
     ) v (TableSchema, TableName, ColumnName, BuiltBy, ReadByAds)
 ),
 actual as (

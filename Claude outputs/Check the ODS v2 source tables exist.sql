@@ -1,7 +1,7 @@
 /*
     Check the ODS v2 source tables exist.sql
 
-    Lists the 71 source tables the ODS v2 build notebooks (ODS_v2_10_Policy ... ODS_v2_40_Reference) read, and
+    Lists the 70 source tables the ODS v2 build notebooks (ODS_v2_10_Policy ... ODS_v2_40_Reference) read, and
     whether each one exists, so a new environment can be checked before the first ODS run. ODS_Build_v2 needs the same
     tables except dlk.cda_loanse (it has no loan section).
 
@@ -12,14 +12,13 @@
     means, from ODS_v2_00_Setup:
         slot        frozen              prod
         dlk         dlk                 prod_dlk            (53 tables)
-        edw         edw                 prod_edw            (13)
-        ods_carry   ods                 ods                 (3)
+        edw         edw                 prod_edw            (15)
         pii         pii                 prod_pii            (2)
     The output schemas (ods_v2, stg) are not checked: ODS_v2_00_Setup creates them if they are missing.
 
     One row per table, missing first. Every row 'present' = the sources are all there.
 
-    Generated on 2026-10-28 from the notebooks in main_v2. If the ODS notebooks change, regenerate it
+    Generated on 2026-11-02 from the notebooks in main_v2. If the ODS notebooks change, regenerate it
     rather than editing it by hand.
 */
 declare @source_set varchar(10) = 'frozen';     -- 'frozen' or 'prod'
@@ -31,7 +30,6 @@ with slots as (
     select * from (values
         ('dlk', 'dlk', 'prod_dlk'),
         ('edw', 'edw', 'prod_edw'),
-        ('ods_carry', 'ods', 'ods'),
         ('pii', 'pii', 'prod_pii')
     ) s (Slot, FrozenSchema, ProdSchema)
 ),
@@ -70,7 +68,7 @@ needed as (
         ('dlk', 'mfq_clientsteps', '21_Quote_Motor'),
         ('dlk', 'mfq_mon_session', '21_Quote_Motor'),
         ('dlk', 'mfq_payments', '21_Quote_Motor'),
-        ('dlk', 'mfq_quotedrivers', '21_Quote_Motor'),
+        ('dlk', 'mfq_quotedrivers', '21_Quote_Motor, 25_Quote_Motor_Query'),
         ('dlk', 'mfq_quotequery', '20_Quote'),
         ('dlk', 'mfq_quoteresponses', '21_Quote_Motor'),
         ('dlk', 'mfq_quotesummary', '21_Quote_Motor'),
@@ -103,9 +101,8 @@ needed as (
         ('edw', 'tbl_ref_calendarlookup', '40_Reference'),
         ('edw', 'tbl_ref_mapping_bar_premium_type', '10_Policy'),
         ('edw', 'tbl_ref_policy', '10_Policy'),
-        ('ods_carry', 'policyhome', '10_Policy'),
-        ('ods_carry', 'policymotorproposer', '10_Policy'),
-        ('ods_carry', 'policymotorvehicle', '10_Policy'),
+        ('edw', 'tbl_ref_policy_home', '10_Policy'),
+        ('edw', 'tbl_ref_policy_motor', '10_Policy'),
         ('pii', 'addresses_assembled', '30_Interaction'),
         ('pii', 'customer_data_assembled', '30_Interaction')
     ) n (Slot, TableName, ReadBy)

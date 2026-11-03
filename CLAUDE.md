@@ -21,7 +21,7 @@ node -e "const nb=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))
 
 ## v2 architecture (main_v2)
 
-Data flows through these layers: `dlk` / `edw` (client source replicas) and `pii` (read only inside Fabric to make hash keys) → **`ods_v2`** (53 tables of reassembled client data, nothing derived, no personal data) → **`ads_v2`** (event stream built from `ods_v2` only, plus the SCV link `ods.scveadmlinkfinal`) → `prd`.
+Data flows through these layers: `dlk` / `edw` (client source replicas) and `pii` (read only inside Fabric to make hash keys) → **`ods_v2`** (56 tables of reassembled client data, nothing derived, no personal data) → **`ads_v2`** (event stream built from `ods_v2` only, plus the SCV link `ods.scveadmlinkfinal`) → `prd`.
 
 **The notebooks are generated.** They are written by generators in a different repo (`C:\Workspaces\CGP_analysis`):
 - ODS: `ods_build/v2/build_notebook.py` from `ods_build/v2/settings.yaml` + `entities/*.yaml` (one entry per table).
@@ -42,7 +42,7 @@ The ADS build notebooks `%run` their setup (`%%pyspark` / `%run EHN_ADS_v2_00_Se
 **House style for SQL cells:** no CTEs. Intermediate steps are their own tables (`stg.odsv2_*`, `stg.adsv2_*`, event families as `stg.adsv2_evt_<code>`). Every cell is `create or replace`, so re-running from a failed cell is always safe. Every cell starts with the boxed header comment: Name, Description, Grain, Business key / Surrogate key, Source, Reads. No literal dates: the window comes from settings only.
 
 **Run order.**
-- ODS: `10_Policy` → `20_Quote` → `21`–`24`, `30_Interaction` in parallel; `40_Reference` can run at any point. `ODS_v2_Run` holds the DAG and resumes a failed batch by skipping notebooks already `succeeded` in `OdsRunLog`. Notebook-launched orchestration (`runMultiple` / `notebook.run`) fails in Fabric, though, so in practice the notebooks run one at a time, by hand or as jobs.
+- ODS: `10_Policy` → `11_Policy_Loan` and `20_Quote` → `21`–`25`, `30_Interaction` in parallel; `40_Reference` can run at any point. `ODS_Build_v2` holds the same SQL in one notebook (55 tables: everything except `11_Policy_Loan`). `ODS_v2_Run` holds the DAG (without `11_Policy_Loan`; the `01 - ODS Build` pipeline has it) and resumes a failed batch by skipping notebooks already `succeeded` in `OdsRunLog`. Notebook-launched orchestration (`runMultiple` / `notebook.run`) fails in Fabric, though, so in practice the notebooks run one at a time, by hand or as jobs.
 - ADS: `10_Common` (shared tables: active sales, Relay documents, renewal cycles, re-quotes, HFQ prices/payments, contact / SCV links, call attribution, Motor and Home cancellations) → `11`–`18` (event families by product and journey, in parallel; `18_Travel` needs nothing from 10) → `19_EventStream` → `20_ScvAttach` → `21_EpisodeNumbering` and `22_Parity`; `23_CampaignHistory` needs only 10. `19_EventStream` unions every family into `ads_v2.EventStream`, one row per `EventId`, and writes per-family output tests to `ads_v2.AdsFamilyCheck`. `EHN_ADS_v2_Run` and `ADS_v2_Run` run this DAG the way `ODS_v2_Run` does (resume by `batch_id` from `AdsRunLog`; `only` runs a subset).
 
 **Key conventions:**
