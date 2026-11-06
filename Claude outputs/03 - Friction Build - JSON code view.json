@@ -1,0 +1,150 @@
+{
+  "name": "03 - Friction Build",
+  "properties": {
+    "activities": [
+      {
+        "name": "FRI_01_Policy_Renewals_30d",
+        "description": "Runs the notebook \"01 - Policy Renewals 30d\"",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      },
+      {
+        "name": "FRI_02_Friction_Frame",
+        "description": "Runs the notebook \"02 - Friction Frame\"",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "FRI_01_Policy_Renewals_30d",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      },
+      {
+        "name": "FRI_03_Measures_Car",
+        "description": "Runs the notebook \"03 - Friction Measures Car\"",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "FRI_02_Friction_Frame",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      },
+      {
+        "name": "FRI_04_Measures_Home",
+        "description": "Runs the notebook \"04 - Friction Measures Home\"",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "FRI_03_Measures_Car",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      },
+      {
+        "name": "FRI_05_Measures_Van",
+        "description": "Runs the notebook \"05 - Friction Measures Van\"",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "FRI_03_Measures_Car",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      },
+      {
+        "name": "FRI_06_Extract_Assembly",
+        "description": "Runs the notebook \"06 - Friction Extract Assembly\"",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "FRI_04_Measures_Home",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "FRI_05_Measures_Van",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c"
+        }
+      }
+    ]
+  }
+}
