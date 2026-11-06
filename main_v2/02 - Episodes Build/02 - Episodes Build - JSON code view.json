@@ -1,0 +1,871 @@
+{
+  "name": "02 - Episodes Build",
+  "properties": {
+    "activities": [
+      {
+        "name": "ADS_10_Common",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "1eea6ffb-4708-4ac9-9750-34f9cfd9f549",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_15s_Motor_InLife_StandIns",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000"
+        }
+      },
+      {
+        "name": "ADS_11_Motor_Acquisition",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "216e5bcc-9150-4f55-b7d8-1731536d2b7f",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_12_Motor_Renewal",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_11_Motor_Acquisition",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "8f237bd9-42f0-4188-a768-045bbb1b6297",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_13_Home_Acquisition",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_18_Travel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "2d0b6703-0964-4476-8da4-04751f6e92a5",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_14_Home_Renewal",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_13_Home_Acquisition",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "981796fa-c65f-4c91-a759-62305813938d",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_15_Motor_InLife",
+        "type": "TridentNotebook",
+        "state": "Inactive",
+        "onInactiveMarkAs": "Succeeded",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_15s_Motor_InLife_StandIns",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_12_Motor_Renewal",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "c5bb1423-7f4d-4939-9be8-9655354125e8",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_16_Home_InLife",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_14_Home_Renewal",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "a5d7cf7f-50de-4bf1-a105-012debca9d17",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_17_Van",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_15_Motor_InLife",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "3b1045eb-a3fc-4b6a-a640-3d10e5a8ed1f",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_18_Travel",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_15s_Motor_InLife_StandIns",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "c06b867a-b515-453e-9fc6-583327cae16d",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_19_EventStream",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_11_Motor_Acquisition",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_12_Motor_Renewal",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_13_Home_Acquisition",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_14_Home_Renewal",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_15_Motor_InLife",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_16_Home_InLife",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_17_Van",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_18_Travel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_15s_Motor_InLife_StandIns",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "f9f0e891-777f-4f02-aef7-2577fcb1027a",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_20_SCV_Attach",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_19_EventStream",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "6964f60d-e392-4138-b20d-3a9a264de836",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_21_Episode_Numbering",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_20_SCV_Attach",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "9748a8c2-46e8-49fe-95b8-6ef5db840800",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_22_Parity",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_20_SCV_Attach",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_23_CampaignHistory",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "00000000-0000-0000-0000-000000000000",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "ADS_23_CampaignHistory",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "ADS_10_Common",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ADS_16_Home_InLife",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "27811dfb-4b64-42d7-a233-0d75b8b02356",
+          "parameters": {
+            "batch_id": {
+              "value": {
+                "value": "@pipeline().parameters.batch_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "start_time": {
+              "value": {
+                "value": "@pipeline().parameters.start_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "end_time": {
+              "value": {
+                "value": "@pipeline().parameters.end_time",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "effective_date": {
+              "value": {
+                "value": "@pipeline().parameters.effective_date",
+                "type": "Expression"
+              },
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "batch_id": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "start_time": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "end_time": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "effective_date": {
+        "type": "string",
+        "defaultValue": ""
+      }
+    }
+  }
+}
