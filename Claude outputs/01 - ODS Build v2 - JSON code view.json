@@ -15,7 +15,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -50,6 +49,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_40_Reference",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -61,7 +66,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -107,7 +111,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -153,7 +156,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -188,6 +190,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_11_Policy_Loan",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -199,7 +207,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -234,6 +241,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_22_Quote_Home",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -245,7 +258,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -280,6 +292,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_23_Quote_Travel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -291,7 +309,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -326,6 +343,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_24_Quote_Van",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -337,7 +360,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -372,6 +394,12 @@
             "dependencyConditions": [
               "Succeeded"
             ]
+          },
+          {
+            "activity": "ODS_21_Quote_Motor",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
         "policy": {
@@ -383,7 +411,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
@@ -422,7 +449,6 @@
         },
         "typeProperties": {
           "notebookId": "00000000-0000-0000-0000-000000000000",
-          "workspaceId": "dd4eaad6-f80b-49cd-bf26-ce3ce5a94b0c",
           "parameters": {
             "batch_id": {
               "value": {
